@@ -13,17 +13,20 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
   
   <style>
-    /* ... (CSS STYLING LAMA, tidak perlu diubah) ... */
+    /* ---------------------------------------------------------------------- */
+    /* 1. DEFINISI TEMA (Menggunakan Tema Hijau Soft Default) */
+    /* ---------------------------------------------------------------------- */
+    
     :root {
-      /* ... (DEFINISI TEMA) ... */
+      /* Warna Dasar Tema Hijau-Putih (Light Soft Theme) */
       --color-white-bg: #FFFFFF;
       --color-light-bg: #FAF9F6;
       --color-dark-text: #333333;
-      --color-green-primary: #7CD18B;
-      --color-red-expense: #F0939A;
+      --color-green-primary: #7CD18B; /* Pemasukan */
+      --color-red-expense: #F0939A; /* Pengeluaran */
       --color-border-classic: #E0E0E0;
-      --color-balance-blue: #8AB8DE;
-      --color-header-green: #6AA573;
+      --color-balance-blue: #8AB8DE; /* Saldo */
+      --color-header-green: #6AA573; /* Primary Accent */
 
       /* Mapping ke Variabel Aplikasi */
       --bg-color: var(--color-light-bg);
@@ -40,7 +43,9 @@
       --font-family-sans: 'Inter', sans-serif;
     }
 
-    /* ... (BASE STYLING & UTILITIES LAMA) ... */
+    /* ---------------------------------------------------------------------- */
+    /* 2. BASE STYLING & UTILITIES */
+    /* ---------------------------------------------------------------------- */
     body {
       font-family: var(--font-family-sans);
       background-color: var(--bg-color);
@@ -171,13 +176,10 @@
   
   <script type="module">
     // ----------------------------------------------------------------------
-    // [INTEGRASI SUPABASE] - GANTI DENGAN KUNCI PROYEK ANDA
+    // [INTEGRASI SUPABASE] - TELAH DIGANTI DENGAN KUNCI PROYEK ANDA
     // ----------------------------------------------------------------------
-    // Anda HARUS mengganti nilai-nilai ini dengan kunci proyek Supabase Anda
     const SUPABASE_URL = 'https://xzlggtyvgnyzzofgudwa.supabase.co'; 
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6bGdndHl2Z255enpvZmd1ZHdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5MDk0MjcsImV4cCI6MjA3NzQ4NTQyN30.x77c3j7TfL5_tQStYNSurhEC6gUDIasuVUk8YpJAi5E'; 
-    // const SUPABASE_URL = 'https://xzlggtyvgnyzzofgudwa.supabase.co'; 
-    // const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'; 
 
     const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     // END [INTEGRASI SUPABASE]
@@ -205,7 +207,7 @@
     const primaryAccent = getComputedStyle(document.documentElement).getPropertyValue('--primary-accent').trim();
     
     // ----------------------------------------------------------------------
-    // FUNGSI UTILITY (Sama dengan kode lama)
+    // FUNGSI UTILITY
     // ----------------------------------------------------------------------
     
     /** Mengubah Angka menjadi format Rupiah */
@@ -426,8 +428,7 @@
             currentCategories.incomeSource = catData.income_source || []; 
             currentCategories.account = catData.account || []; 
         } else {
-             // Inisialisasi default jika dokumen setting belum ada
-             // Ini akan di-handle oleh saveCategories jika belum ada data.
+             // Jika dokumen setting belum ada, simpan kategori default ke database
              await saveCategories();
         }
         
@@ -553,6 +554,16 @@
                 });
             
             if (error) throw error;
+            
+            // Jika berhasil disimpan, pastikan currentCategories memiliki nilai default jika sebelumnya kosong
+            if (currentCategories.expense.length === 0) {
+                 // Inisialisasi default jika dokumen setting belum ada
+                 currentCategories = { 
+                    expense: ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'], 
+                    incomeSource: ['Gaji', 'Bisnis Sampingan', 'Investasi'],
+                    account: ['Kas', 'Bank Utama', 'E-Wallet']
+                 };
+            }
 
         } catch (e) {
             console.error("Error saving categories:", e);
@@ -592,7 +603,7 @@
     }
     
     // ----------------------------------------------------------------------
-    // FUNGSI LAINNYA (TIDAK BERUBAH DARI KODE LAMA)
+    // FUNGSI LAINNYA
     // ----------------------------------------------------------------------
     
     /** Memuat semua data Dashboard untuk periode yang diberikan */
@@ -650,6 +661,7 @@
 
         let totalBudget = 0;
         let totalUsed = 0;
+        let detailsHtml = ''; // Untuk menyimpan detail per kategori
 
         // Hitung total budget dan render status per kategori
         Object.keys(periodBudget.budgets).forEach(category => {
@@ -664,7 +676,7 @@
             const progressBarColor = usagePercentage > 90 ? 'bg-red-500' : usagePercentage > 70 ? 'bg-yellow-500' : 'bg-green-500';
             const progressWidth = Math.min(usagePercentage, 100);
 
-            budgetContainer.innerHTML += `
+            detailsHtml += `
                 <div class="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <div class="flex justify-between items-center mb-1">
                         <span class="font-semibold text-sm">${category}</span>
@@ -690,7 +702,7 @@
                 <p class="text-gray-700">Terpakai: ${formatRupiah(totalUsed)}</p>
                 <p style="color: ${totalBudget - totalUsed >= 0 ? primaryAccent : expenseColor};">Sisa: ${formatRupiah(totalBudget - totalUsed)}</p>
             </div>
-            ${budgetContainer.innerHTML}
+            ${detailsHtml}
         `;
     }
 
@@ -754,7 +766,7 @@
         });
     }
 
-    /** FUNGSI BARU: Menggambar Bar Chart Tren Bulanan */
+    /** Menggambar Bar Chart Tren Bulanan */
     function renderMonthlyTrendChart() {
         const trendEl = document.getElementById('monthlyTrendChart');
         if (!trendEl) return;
@@ -826,7 +838,7 @@
     }
 
     // ----------------------------------------------------------------------
-    // NAVIGATION AND PERIOD CONTROL (TIDAK BERUBAH)
+    // NAVIGATION AND PERIOD CONTROL
     // ----------------------------------------------------------------------
     
     let currentPage = 'dashboard';
@@ -1493,7 +1505,7 @@
     }
 
     // ----------------------------------------------------------------------
-    // PERIOD CONTROL (TIDAK BERUBAH)
+    // PERIOD CONTROL
     // ----------------------------------------------------------------------
     
     /** Memperbarui tampilan periode saat ini */
@@ -1535,12 +1547,13 @@
         });
     });
     
-    // Mulai inisialisasi Supabase saat dokumen siap
+    // Mulai inisialisasi Supabase saat dokumen siap (PERBAIKAN ERROR WINDOW.ONLOAD)
     window.onload = initializeSupabase;
     
     // Tambahkan listener untuk merespon perubahan ukuran window (untuk chart)
     window.addEventListener('resize', () => {
         if (currentPage === 'dashboard' && isAuthReady) {
+            // Memuat ulang chart yang responsif terhadap perubahan ukuran
             loadDashboard(currentPeriod);
         }
     });
