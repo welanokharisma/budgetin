@@ -338,12 +338,11 @@
       if (!name) { authMessage.textContent = 'Nama harus diisi.'; return; }
       authMessage.textContent = 'Mendaftar...';
       try {
+        // Coba registrasi dan tambahkan full_name ke user metadata
         const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
         if (error) throw error;
         authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi.';
-        try {
-          await supabase.auth.signInWithPassword({ email, password });
-        } catch (e) {}
+        // Secara implisit Supabase akan memicu event SIGNED_IN
       } catch (err) {
         authMessage.textContent = `Gagal registrasi: ${err.message || err}`;
       }
@@ -378,43 +377,93 @@
       };
     }
 
-    // Auth state listener
-    supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') {
-        user = null;
-        userId = null;
-        isAuthReady = false;
-        showAuthUI();
-      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
-        user = session?.user ?? null;
-        userId = user?.id ?? null;
-        isAuthReady = !!userId;
+    // ====================================================================
+    // PERBAIKAN: FUNGSI UNTUK MENAMBAH DATA DEFAULT (KATEGORI DAN AKUN)
+    // ====================================================================
+    const addDefaultData = async (userId) => {
+        // 1. Cek & Tambah Kategori Default
+        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
+        if (catData && catData.length > 0) {
+          console.log("Data default (kategori) sudah ada.");
+        } else {
+          console.log("Menambahkan kategori default...");
+          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
+          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
+          const toInsert = [
+              ...defaultExpense.map(name => ({ profile_id: userId, name, type: 'expense' })),
+              ...defaultIncome.map(name => ({ profile_id: userId, name, type: 'income' }))
+          ];
+          const { error: catError } = await supabase.from('categories').insert(toInsert);
+          if (catError) {
+              console.error("Gagal menambahkan kategori default:", catError.message);
+          }
+        }
+
+        // 2. Cek & Tambah Akun Default
+        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
+        if (accData && accData.length > 0) {
+          console.log("Data default (akun) sudah ada.");
+        } else {
+          console.log("Menambahkan akun default...");
+          const defaultAccounts = ['Kas Utama', 'Bank Utama', 'E-Wallet'];
+          const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
+          const { error: accError } = await supabase.from('accounts').insert(toInsertAcc);
+          if (accError) {
+              console.error("Gagal menambahkan akun default:", accError.message);
+          }
+        }
+    };
+
+
+    // ====================================================================
+    // PERBAIKAN: FUNGSI UNTUK MENANGANI PENGGUNA BARU DAN LOGIN
+    // * Ini menggabungkan logika ensureProfileExists dan seedDefaults
+    // ====================================================================
+    const handleNewUser = async (session) => {
+        const userId = session.user.id;
+        const email = session.user.email;
+        
+        // 1. Cek apakah profil sudah ada
+        const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle(); 
+
+        if (!profileData) {
+            console.log("Pengguna baru terdeteksi. Membuat profil...");
+            
+            // 2. Ambil nama dari metadata
+            const nameFromMetadata = session.user?.user_metadata?.full_name || session.user?.user_metadata?.name || null;
+
+            // 3. Buat Profil Baru (id = auth.uid())
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .insert({ 
+                    id: userId, 
+                    email: email, 
+                    full_name: nameFromMetadata
+                });
+
+            if (profileError) {
+                // Jika gagal membuat profil, batalkan pendaftaran dan hentikan proses
+                console.error('FATAL: Gagal membuat profil:', profileError.message);
+                await supabase.auth.signOut(); 
+                alert('Pendaftaran gagal total. Silakan coba lagi.');
+                return;
+            }
+        } 
+
+        // 4. Tambahkan data default (kategori/akun) - fungsi ini juga melakukan pengecekan data
+        await addDefaultData(userId);
+        
+        // 5. Setelah profil dan data default terjamin ada, inisialisasi aplikasi
+        user = session.user;
+        isAuthReady = true;
         hideAuthUI();
         await postSignInInit();
-      }
-    });
+    };
 
-    // Initial session check
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const session = data?.session ?? null;
-        if (session && session.user) {
-          user = session.user;
-          userId = user.id;
-          isAuthReady = true;
-          hideAuthUI();
-          await postSignInInit();
-        } else {
-          showAuthUI();
-        }
-      } catch (err) {
-        console.error('Error checking session', err);
-        showAuthUI();
-      } finally {
-        document.getElementById('loadingOverlay').classList.add('hidden');
-      }
-    })();
 
     function showAuthUI() {
       document.getElementById('mainContent').classList.add('hidden');
@@ -428,12 +477,11 @@
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
-    // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
+    // After sign-in init: load categories/accounts, load all transactions & budgets
     async function postSignInInit() {
       if (!isAuthReady || !userId) return;
       document.getElementById('userIdDisplay').textContent = `User ID: ${userId.substring(0,8)}...`;
-      await ensureProfileExists();
-      await seedDefaults();
+      // ensureProfileExists() dan seedDefaults() sudah tidak perlu dipanggil di sini, karena sudah dipanggil di handleNewUser
       await fetchCategories();
       await fetchAccounts();
       await fetchBudgets();
@@ -444,53 +492,44 @@
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
-    async function ensureProfileExists() {
+    // ====================================================================
+    // PERBAIKAN: AUTH STATE LISTENER (Mengarahkan ke handleNewUser)
+    // ====================================================================
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        user = null;
+        userId = null;
+        isAuthReady = false;
+        showAuthUI();
+      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+        if (session && session.user) {
+          userId = session.user.id; 
+          await handleNewUser(session);
+        }
+      }
+    });
+
+    // ====================================================================
+    // PERBAIKAN: Initial session check (Mengarahkan ke handleNewUser)
+    // ====================================================================
+    (async () => {
       try {
-        const { data: existing, error: selErr } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('id', userId)
-          .limit(1)
-          .maybeSingle();
-        if (selErr) throw selErr;
-        if (!existing) {
-          const nameFromMetadata = user?.user_metadata?.full_name || user?.user_metadata?.name || (document.getElementById('regName')?.value || null);
-          const fullName = nameFromMetadata || null;
-          const { error: insErr } = await supabase
-            .from('profiles')
-            .insert([{ id: userId, email: user.email, full_name: fullName }], { returning: 'minimal' });
-          if (insErr) console.warn('profile insert warning', insErr);
+        const { data } = await supabase.auth.getSession();
+        const session = data?.session ?? null;
+        if (session && session.user) {
+          userId = session.user.id; 
+          await handleNewUser(session);
+        } else {
+          showAuthUI();
         }
       } catch (err) {
-        console.error('ensureProfileExists error', err);
+        console.error('Error checking session', err);
+        showAuthUI();
+      } finally {
+        // Overlay dihilangkan setelah pengecekan awal selesai
+        document.getElementById('loadingOverlay').classList.add('hidden');
       }
-    }
-
-    async function seedDefaults() {
-      try {
-        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
-        if (!catData || catData.length === 0) {
-          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
-          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
-          const toInsert = [
-            ...defaultExpense.map(name => ({ profile_id: userId, name, type: 'expense' })),
-            ...defaultIncome.map(name => ({ profile_id: userId, name, type: 'income' }))
-          ];
-          const { error: insertErr } = await supabase.from('categories').insert(toInsert);
-          if (insertErr) console.warn('seed categories error', insertErr);
-        }
-
-        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
-        if (!accData || accData.length === 0) {
-          const defaultAccounts = ['Kas', 'Bank Utama', 'E-Wallet'];
-          const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
-          const { error: insErr } = await supabase.from('accounts').insert(toInsertAcc);
-          if (insErr) console.warn('seed accounts error', insErr);
-        }
-      } catch (err) {
-        console.error('seedDefaults error', err);
-      }
-    }
+    })();
 
     // Fetch helpers
     async function fetchCategories() {
@@ -1352,109 +1391,6 @@
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('loadingOverlay').classList.add('hidden');
     });
-
-  </script>
-
-  <!--
-    IMPORTANT SQL NOTES (run these in Supabase SQL editor before using the app):
-
-    create extension if not exists "pgcrypto";
-
-    create table if not exists profiles (
-      id uuid primary key,
-      email text,
-      full_name text,
-      created_at timestamptz default now()
-    );
-
-    create table if not exists accounts (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      name text not null,
-      currency text default 'IDR',
-      balance numeric default 0,
-      created_at timestamptz default now()
-    );
-
-    create table if not exists categories (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      name text not null,
-      type text check (type in ('income','expense')),
-      created_at timestamptz default now()
-    );
-
-    create table if not exists transactions (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      account_id uuid references accounts(id),
-      category_id uuid references categories(id),
-      account_name text,
-      category_name text,
-      type text check (type in ('Pemasukan','Pengeluaran')) not null,
-      amount numeric not null,
-      date date not null,
-      period text,
-      description text,
-      created_at timestamptz default now()
-    );
-
-    create or replace function set_period_from_date()
-    returns trigger as $$
-    begin
-      new.period := to_char(new.date, 'YYYY-MM');
-      return new;
-    end;
-    $$ language plpgsql;
-
-    drop trigger if exists trg_set_period_from_date on transactions;
-    create trigger trg_set_period_from_date
-      before insert or update on transactions
-      for each row
-      execute function set_period_from_date();
-
-    create table if not exists budgets (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      category_id uuid references categories(id),
-      period text not null,
-      amount_limit numeric not null,
-      created_at timestamptz default now(),
-      unique (profile_id, category_id, period)
-    );
-
-    -- Enable row-level security and create policies (run once)
-    alter table profiles enable row level security;
-    alter table accounts enable row level security;
-    alter table categories enable row level security;
-    alter table transactions enable row level security;
-    alter table budgets enable row level security;
-
-    create policy "Select own profile" on profiles
-      for select using (auth.uid() = id);
-    create policy "Insert own profile" on profiles
-      for insert with check (auth.uid() = id);
-
-    create policy "Accounts select own" on accounts
-      for select using (profile_id = auth.uid());
-    create policy "Accounts modify own" on accounts
-      for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
-
-    create policy "Categories select own" on categories
-      for select using (profile_id = auth.uid());
-    create policy "Categories modify own" on categories
-      for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
-
-    create policy "Transactions select own" on transactions
-      for select using (profile_id = auth.uid());
-    create policy "Transactions modify own" on transactions
-      for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
-
-    create policy "Budgets select own" on budgets
-      for select using (profile_id = auth.uid());
-    create policy "Budgets modify own" on budgets
-      for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
-  -->
 
 </body>
 </html>
