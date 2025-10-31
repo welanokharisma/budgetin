@@ -242,6 +242,9 @@
     let currentPage = 'dashboard';
     let currentPeriod = new Date().toISOString().substring(0,7); // YYYY-MM
 
+    // Realtime subscriptions - FIXED
+    let realtimeChannel = null;
+
     // Colors from CSS
     const expenseColor = getComputedStyle(document.documentElement).getPropertyValue('--color-red-expense').trim();
     const incomeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-green-primary').trim();
@@ -357,17 +360,26 @@
       }
     });
 
-    // Realtime subscriptions - PERBAIKAN
-    let realtimeChannel = null;
+    // Cleanup function - FIXED
+    function cleanupRealtime() {
+      if (realtimeChannel) {
+        console.log('Cleaning up realtime channel');
+        supabase.removeChannel(realtimeChannel);
+        realtimeChannel = null;
+      }
+    }
 
     function setupRealtime() {
       try {
         // Hentikan channel yang existing
-        if (realtimeChannel) {
-          supabase.removeChannel(realtimeChannel);
-          realtimeChannel = null;
+        cleanupRealtime();
+        
+        if (!userId) {
+          console.log('No user ID, skipping realtime setup');
+          return;
         }
         
+        console.log('Setting up realtime for user:', userId);
         realtimeChannel = supabase.channel('realtime-' + userId)
           .on('postgres_changes', 
             { 
@@ -376,7 +388,10 @@
               table: 'transactions', 
               filter: `profile_id=eq.${userId}` 
             }, 
-            () => fetchTransactions()
+            () => {
+              console.log('Transaction changed, refetching...');
+              fetchTransactions();
+            }
           )
           .on('postgres_changes', 
             { 
@@ -385,7 +400,10 @@
               table: 'categories', 
               filter: `profile_id=eq.${userId}` 
             }, 
-            () => fetchCategories()
+            () => {
+              console.log('Categories changed, refetching...');
+              fetchCategories();
+            }
           )
           .on('postgres_changes', 
             { 
@@ -394,7 +412,10 @@
               table: 'accounts', 
               filter: `profile_id=eq.${userId}` 
             }, 
-            () => fetchAccounts()
+            () => {
+              console.log('Accounts changed, refetching...');
+              fetchAccounts();
+            }
           )
           .on('postgres_changes', 
             { 
@@ -403,72 +424,77 @@
               table: 'budgets', 
               filter: `profile_id=eq.${userId}` 
             }, 
-            () => fetchBudgets()
-          );
-        
-        realtimeChannel.subscribe();
+            () => {
+              console.log('Budgets changed, refetching...');
+              fetchBudgets();
+            }
+          )
+          .on('system', { event: 'disconnect' }, () => {
+            console.log('Realtime disconnected');
+          })
+          .subscribe((status) => {
+            console.log('Realtime subscription status:', status);
+          });
         
       } catch (err) {
-        console.warn('setupRealtime warn', err);
+        console.warn('setupRealtime error', err);
       }
     }
 
-    // Cleanup function
-    function cleanupRealtime() {
-      if (realtimeChannel) {
-        supabase.removeChannel(realtimeChannel);
-        realtimeChannel = null;
-      }
-    }
-
-    // Force logout method sebagai fallback
-    function forceLogout() {
-      // Clear semua state local
-      user = null;
-      userId = null;
-      isAuthReady = false;
-      
-      // Clear localStorage (opsional)
-      localStorage.removeItem('supabase.auth.token');
-      
-      // Redirect ke halaman login
-      window.location.href = window.location.href.split('?')[0];
-    }
-
-    // Sign out - PERBAIKAN
+    // Sign out - FIXED VERSION
     document.getElementById('btnSignOut').addEventListener('click', async () => {
-      // Tampilkan konfirmasi
       showModal('Konfirmasi Logout', 'Apakah Anda yakin ingin logout?', true, async () => {
         try {
-          // Method 1: Normal logout
-          if (realtimeChannel) {
-            await supabase.removeChannel(realtimeChannel);
-            realtimeChannel = null;
+          console.log('Starting logout process...');
+          
+          // 1. Cleanup realtime first
+          cleanupRealtime();
+          
+          // 2. Clear all app state
+          user = null;
+          userId = null;
+          isAuthReady = false;
+          currentTransactions = [];
+          currentBudgets = [];
+          currentCategories = { expense: [], incomeSource: [], account: [] };
+          
+          // 3. Sign out from Supabase
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            console.error('Supabase signOut error:', error);
+            throw error;
           }
           
-          const { error } = await supabase.auth.signOut();
-          if (error) throw error;
+          console.log('Logout successful, reloading page...');
           
-          window.location.reload();
+          // 4. Force reload to ensure clean state
+          setTimeout(() => {
+            window.location.reload();
+          }, 500);
           
         } catch (err) {
-          console.error('Normal logout failed, using force logout:', err);
-          // Method 2: Force logout
-          forceLogout();
+          console.error('Logout error:', err);
+          // Fallback: force reload anyway
+          window.location.reload();
         }
       });
     });
 
-    // Auth state listener - PERBAIKAN
+    // Auth state listener - FIXED
     supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event);
+      console.log('Auth state changed:', event, 'User:', session?.user?.id);
       
       if (event === 'SIGNED_OUT') {
+        console.log('User signed out, cleaning up...');
         // Cleanup resources
         cleanupRealtime();
         user = null;
         userId = null;
         isAuthReady = false;
+        currentTransactions = [];
+        currentBudgets = [];
+        currentCategories = { expense: [], incomeSource: [], account: [] };
+        
         showAuthUI();
         
       } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
@@ -477,6 +503,19 @@
         isAuthReady = !!userId;
         
         if (userId) {
+          console.log('User signed in:', userId);
+          hideAuthUI();
+          await postSignInInit();
+        } else {
+          console.log('No user ID, showing auth UI');
+          showAuthUI();
+        }
+      } else if (event === 'INITIAL_SESSION') {
+        // Handle initial session
+        if (session?.user) {
+          user = session.user;
+          userId = user.id;
+          isAuthReady = true;
           hideAuthUI();
           await postSignInInit();
         } else {
@@ -485,13 +524,19 @@
       }
     });
 
-    // Initial session check - PERBAIKAN
+    // Initial session check - FIXED
     (async () => {
       try {
+        console.log('Checking initial session...');
         const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
+        if (error) {
+          console.error('Session check error:', error);
+          throw error;
+        }
         
         const session = data?.session ?? null;
+        console.log('Initial session:', session ? 'Found' : 'Not found');
+        
         if (session && session.user) {
           user = session.user;
           userId = user.id;
@@ -510,31 +555,45 @@
     })();
 
     function showAuthUI() {
+      console.log('Showing auth UI');
       document.getElementById('mainContent').classList.add('hidden');
       document.getElementById('authWrapper').classList.remove('hidden');
-      document.getElementById('authWrapper').scrollIntoView({ behavior: 'smooth' });
+      // Reset auth forms
+      document.getElementById('loginForm').reset();
+      document.getElementById('registerForm').reset();
+      authMessage.textContent = '';
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
+    
     function hideAuthUI() {
+      console.log('Hiding auth UI');
       document.getElementById('authWrapper').classList.add('hidden');
       document.getElementById('mainContent').classList.remove('hidden');
     }
 
     // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
     async function postSignInInit() {
-      if (!isAuthReady || !userId) return;
-      console.log('User ID:', userId); // Debug
+      if (!isAuthReady || !userId) {
+        console.log('No user ID, skipping postSignInInit');
+        return;
+      }
+      console.log('Running postSignInInit for user:', userId);
       document.getElementById('userIdDisplay').textContent = `User ID: ${userId.substring(0,8)}...`;
-      await ensureProfileExists();
-      await seedDefaults();
-      await fetchCategories();
-      await fetchAccounts();
-      await fetchBudgets();
-      // Now fetch all transactions immediately (per your request)
-      await fetchTransactions();
-      setupRealtime();
-      renderPage('dashboard');
-      document.getElementById('loadingOverlay').classList.add('hidden');
+      
+      try {
+        await ensureProfileExists();
+        await seedDefaults();
+        await fetchCategories();
+        await fetchAccounts();
+        await fetchBudgets();
+        await fetchTransactions();
+        setupRealtime();
+        renderPage('dashboard');
+      } catch (error) {
+        console.error('Error in postSignInInit:', error);
+      } finally {
+        document.getElementById('loadingOverlay').classList.add('hidden');
+      }
     }
 
     async function ensureProfileExists() {
@@ -1374,148 +1433,5 @@
     });
 
   </script>
-
-  <!--
-    IMPORTANT SQL NOTES (run these in Supabase SQL editor before using the app):
-    1) Basic schema (run once):
-
-    -- enable extension for gen_random_uuid if not enabled
-    create extension if not exists "pgcrypto";
-
-    create table if not exists profiles (
-      id uuid primary key,
-      email text,
-      full_name text,
-      created_at timestamptz default now()
-    );
-
-    create table if not exists accounts (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      name text not null,
-      currency text default 'IDR',
-      balance numeric default 0,
-      created_at timestamptz default now()
-    );
-
-    create table if not exists categories (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      name text not null,
-      type text check (type in ('income','expense')),
-      created_at timestamptz default now()
-    );
-
-    create table if not exists transactions (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      account_id uuid references accounts(id),
-      category_id uuid references categories(id),
-      account_name text,
-      category_name text,
-      type text check (type in ('Pemasukan','Pengeluaran')) not null,
-      amount numeric not null,
-      date date not null,
-      period text,
-      description text,
-      created_at timestamptz default now()
-    );
-
-    -- trigger to fill period (YYYY-MM)
-    create or replace function set_period_from_date()
-    returns trigger as $$
-    begin
-      new.period := to_char(new.date, 'YYYY-MM');
-      return new;
-    end;
-    $$ language plpgsql;
-
-    drop trigger if exists trg_set_period_from_date on transactions;
-    create trigger trg_set_period_from_date
-      before insert or update on transactions
-      for each row
-      execute function set_period_from_date();
-
-    create table if not exists budgets (
-      id uuid primary key default gen_random_uuid(),
-      profile_id uuid references profiles(id) on delete cascade,
-      category_id uuid references categories(id),
-      period text not null,
-      amount_limit numeric not null,
-      created_at timestamptz default now(),
-      unique (profile_id, category_id, period)
-    );
-
-    -- Enable RLS dan buat policies
-    ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
-
-    -- Policies untuk profiles
-    CREATE POLICY "Users can view own profile" ON profiles
-        FOR SELECT USING (auth.uid() = id);
-
-    CREATE POLICY "Users can update own profile" ON profiles
-        FOR UPDATE USING (auth.uid() = id);
-
-    CREATE POLICY "Users can insert own profile" ON profiles
-        FOR INSERT WITH CHECK (auth.uid() = id);
-
-    -- Policies untuk categories
-    CREATE POLICY "Users can view own categories" ON categories
-        FOR SELECT USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can insert own categories" ON categories
-        FOR INSERT WITH CHECK (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can update own categories" ON categories
-        FOR UPDATE USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can delete own categories" ON categories
-        FOR DELETE USING (auth.uid() = profile_id);
-
-    -- Policies untuk accounts
-    CREATE POLICY "Users can view own accounts" ON accounts
-        FOR SELECT USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can insert own accounts" ON accounts
-        FOR INSERT WITH CHECK (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can update own accounts" ON accounts
-        FOR UPDATE USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can delete own accounts" ON accounts
-        FOR DELETE USING (auth.uid() = profile_id);
-
-    -- Policies untuk transactions
-    CREATE POLICY "Users can view own transactions" ON transactions
-        FOR SELECT USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can insert own transactions" ON transactions
-        FOR INSERT WITH CHECK (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can update own transactions" ON transactions
-        FOR UPDATE USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can delete own transactions" ON transactions
-        FOR DELETE USING (auth.uid() = profile_id);
-
-    -- Policies untuk budgets
-    CREATE POLICY "Users can view own budgets" ON budgets
-        FOR SELECT USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can insert own budgets" ON budgets
-        FOR INSERT WITH CHECK (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can update own budgets" ON budgets
-        FOR UPDATE USING (auth.uid() = profile_id);
-
-    CREATE POLICY "Users can delete own budgets" ON budgets
-        FOR DELETE USING (auth.uid() = profile_id);
-
-  -->
-
 </body>
 </html>
