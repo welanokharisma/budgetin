@@ -222,13 +222,55 @@
 
   <!-- SCRIPT: Supabase integration and app logic -->
   <script type="module">
-    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+    console.log('🚀 Starting Budgetin Application...');
 
-    // Supabase credentials (you provided these)
-    const SUPABASE_URL = 'https://xzlggtyvgnyzzofgudwa.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6bGdndHl2Z255enpvZmd1ZHdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5MDk0MjcsImV4cCI6MjA3NzQ4NTQyN30.x77c3j7TfL5_tQStYNSurhEC6gUDIasuVUk8YpJAi5E';
+    // Singleton Supabase Service untuk menghindari multiple instances
+    class SupabaseService {
+      static instance = null;
+      
+      static async getInstance() {
+        if (!this.instance) {
+          try {
+            const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm');
+            
+            this.instance = createClient(
+              'https://xzlggtyvgnyzzofgudwa.supabase.co',
+              'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6bGdndHl2Z255enpvZmd1ZHdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5MDk0MjcsImV4cCI6MjA3NzQ4NTQyN30.x77c3j7TfL5_tQStYNSurhEC6gUDIasuVUk8YpJAi5E',
+              {
+                auth: {
+                  persistSession: true,
+                  autoRefreshToken: true,
+                  detectSessionInUrl: true,
+                  storage: localStorage
+                }
+              }
+            );
+            console.log('✅ Supabase instance created successfully');
+          } catch (error) {
+            console.error('❌ Failed to create Supabase instance:', error);
+            throw error;
+          }
+        }
+        return this.instance;
+      }
+    }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true } });
+    // Initialize Supabase dengan error handling
+    let supabase;
+    try {
+      supabase = await SupabaseService.getInstance();
+      console.log('✅ Supabase initialized successfully');
+    } catch (error) {
+      console.error('❌ Supabase initialization failed:', error);
+      document.getElementById('loadingOverlay').innerHTML = `
+        <div class="text-center">
+          <div class="text-red-500 text-xl mb-4">❌ Error Initializing App</div>
+          <p class="text-gray-600 mb-2">Failed to connect to database.</p>
+          <p class="text-gray-600 mb-4">Please check your internet connection and refresh the page.</p>
+          <button onclick="window.location.reload()" class="bg-blue-500 text-white px-4 py-2 rounded-lg">Refresh Page</button>
+        </div>
+      `;
+    }
 
     // App state
     let user = null;
@@ -242,16 +284,11 @@
     let currentPage = 'dashboard';
     let currentPeriod = new Date().toISOString().substring(0,7); // YYYY-MM
 
-    // Realtime subscriptions - FIXED
-    let realtimeChannel = null;
-
     // Colors from CSS
-    const expenseColor = getComputedStyle(document.documentElement).getPropertyValue('--color-red-expense').trim();
-    const incomeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-green-primary').trim();
-    const balanceColor = getComputedStyle(document.documentElement).getPropertyValue('--color-balance-blue').trim();
-    const chartBg = getComputedStyle(document.documentElement).getPropertyValue('--chart-bg').trim();
-    const chartText = getComputedStyle(document.documentElement).getPropertyValue('--chart-text') || getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
-    const primaryAccent = getComputedStyle(document.documentElement).getPropertyValue('--primary-accent').trim();
+    const expenseColor = '#F0939A';
+    const incomeColor = '#7CD18B';
+    const balanceColor = '#8AB8DE';
+    const primaryAccent = '#6AA573';
 
     // Utility: format currency (IDR)
     function formatRupiah(number) {
@@ -285,6 +322,7 @@
       modal.classList.remove('hidden');
       modal.classList.add('flex');
     }
+    
     function closeModal() {
       const modal = document.getElementById('modal');
       if (modal) {
@@ -294,15 +332,13 @@
     }
 
     // Auth UI bindings
-    const authWrapper = document.getElementById('authWrapper');
-    const authMessage = document.getElementById('authMessage');
-
     document.getElementById('btnShowLogin').addEventListener('click', () => {
       document.getElementById('btnShowLogin').classList.add('active');
       document.getElementById('btnShowRegister').classList.remove('active');
       document.getElementById('loginForm').classList.remove('hidden');
       document.getElementById('registerForm').classList.add('hidden');
     });
+    
     document.getElementById('btnShowRegister').addEventListener('click', () => {
       document.getElementById('btnShowRegister').classList.add('active');
       document.getElementById('btnShowLogin').classList.remove('active');
@@ -315,13 +351,18 @@
       e.preventDefault();
       const email = document.getElementById('loginEmail').value;
       const password = document.getElementById('loginPassword').value;
+      const authMessage = document.getElementById('authMessage');
       authMessage.textContent = 'Sedang mencoba masuk...';
+      
       try {
+        console.log('🔐 Attempting login...');
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         authMessage.textContent = 'Berhasil masuk. Memuat data...';
+        console.log('✅ Login successful');
       } catch (err) {
-        authMessage.textContent = `Gagal masuk: ${err.message || err}`;
+        console.error('❌ Login failed:', err);
+        authMessage.textContent = `Gagal masuk: ${err.message}`;
       }
     });
 
@@ -331,18 +372,30 @@
       const name = document.getElementById('regName').value.trim();
       const email = document.getElementById('regEmail').value.trim();
       const password = document.getElementById('regPassword').value;
-      if (!name) { authMessage.textContent = 'Nama harus diisi.'; return; }
+      const authMessage = document.getElementById('authMessage');
+      
+      if (!name) { 
+        authMessage.textContent = 'Nama harus diisi.'; 
+        return; 
+      }
+      
       authMessage.textContent = 'Mendaftar...';
       try {
-        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
+        const { data, error } = await supabase.auth.signUp({ 
+          email, 
+          password, 
+          options: { data: { full_name: name } } 
+        });
         if (error) throw error;
-        authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi.';
-        try {
-          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-        } catch (e) {
-        }
+        authMessage.textContent = 'Registrasi berhasil. Silakan login dengan email dan password Anda.';
+        
+        // Reset form
+        document.getElementById('registerForm').reset();
+        document.getElementById('btnShowLogin').click();
+        
       } catch (err) {
-        authMessage.textContent = `Gagal registrasi: ${err.message || err}`;
+        console.error('❌ Registration failed:', err);
+        authMessage.textContent = `Gagal registrasi: ${err.message}`;
       }
     });
 
@@ -352,149 +405,41 @@
       const email = document.getElementById('loginEmail').value.trim();
       if (!email) return showModal('Perhatian', 'Masukkan email di kolom email untuk reset password.');
       try {
-        const { data, error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+        const { data, error } = await supabase.auth.resetPasswordForEmail(email, { 
+          redirectTo: window.location.href 
+        });
         if (error) throw error;
         showModal('Sukses', 'Email reset password telah dikirim (cek inbox/spam).');
       } catch (err) {
-        showModal('Gagal', `Gagal mengirim email reset: ${err.message || err}`);
+        showModal('Gagal', `Gagal mengirim email reset: ${err.message}`);
       }
     });
 
-    // Cleanup function - FIXED
-    function cleanupRealtime() {
-      if (realtimeChannel) {
-        console.log('Cleaning up realtime channel');
-        supabase.removeChannel(realtimeChannel);
-        realtimeChannel = null;
-      }
-    }
-
-    function setupRealtime() {
-      try {
-        // Hentikan channel yang existing
-        cleanupRealtime();
-        
-        if (!userId) {
-          console.log('No user ID, skipping realtime setup');
-          return;
-        }
-        
-        console.log('Setting up realtime for user:', userId);
-        realtimeChannel = supabase.channel('realtime-' + userId)
-          .on('postgres_changes', 
-            { 
-              event: '*', 
-              schema: 'public', 
-              table: 'transactions', 
-              filter: `profile_id=eq.${userId}` 
-            }, 
-            () => {
-              console.log('Transaction changed, refetching...');
-              fetchTransactions();
-            }
-          )
-          .on('postgres_changes', 
-            { 
-              event: '*', 
-              schema: 'public', 
-              table: 'categories', 
-              filter: `profile_id=eq.${userId}` 
-            }, 
-            () => {
-              console.log('Categories changed, refetching...');
-              fetchCategories();
-            }
-          )
-          .on('postgres_changes', 
-            { 
-              event: '*', 
-              schema: 'public', 
-              table: 'accounts', 
-              filter: `profile_id=eq.${userId}` 
-            }, 
-            () => {
-              console.log('Accounts changed, refetching...');
-              fetchAccounts();
-            }
-          )
-          .on('postgres_changes', 
-            { 
-              event: '*', 
-              schema: 'public', 
-              table: 'budgets', 
-              filter: `profile_id=eq.${userId}` 
-            }, 
-            () => {
-              console.log('Budgets changed, refetching...');
-              fetchBudgets();
-            }
-          )
-          .on('system', { event: 'disconnect' }, () => {
-            console.log('Realtime disconnected');
-          })
-          .subscribe((status) => {
-            console.log('Realtime subscription status:', status);
-          });
-        
-      } catch (err) {
-        console.warn('setupRealtime error', err);
-      }
-    }
-
-    // Sign out - FIXED VERSION
+    // Sign out
     document.getElementById('btnSignOut').addEventListener('click', async () => {
       showModal('Konfirmasi Logout', 'Apakah Anda yakin ingin logout?', true, async () => {
         try {
-          console.log('Starting logout process...');
-          
-          // 1. Cleanup realtime first
-          cleanupRealtime();
-          
-          // 2. Clear all app state
-          user = null;
-          userId = null;
-          isAuthReady = false;
-          currentTransactions = [];
-          currentBudgets = [];
-          currentCategories = { expense: [], incomeSource: [], account: [] };
-          
-          // 3. Sign out from Supabase
+          console.log('🚪 Starting logout process...');
           const { error } = await supabase.auth.signOut();
-          if (error) {
-            console.error('Supabase signOut error:', error);
-            throw error;
-          }
-          
-          console.log('Logout successful, reloading page...');
-          
-          // 4. Force reload to ensure clean state
-          setTimeout(() => {
-            window.location.reload();
-          }, 500);
-          
+          if (error) throw error;
+          console.log('✅ Logout successful');
+          window.location.reload();
         } catch (err) {
-          console.error('Logout error:', err);
-          // Fallback: force reload anyway
+          console.error('❌ Logout error:', err);
           window.location.reload();
         }
       });
     });
 
-    // Auth state listener - FIXED
+    // Auth state listener dengan comprehensive error handling
     supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event, 'User:', session?.user?.id);
+      console.log('🔐 Auth state changed:', event);
       
       if (event === 'SIGNED_OUT') {
-        console.log('User signed out, cleaning up...');
-        // Cleanup resources
-        cleanupRealtime();
+        console.log('👤 User signed out');
         user = null;
         userId = null;
         isAuthReady = false;
-        currentTransactions = [];
-        currentBudgets = [];
-        currentCategories = { expense: [], incomeSource: [], account: [] };
-        
         showAuthUI();
         
       } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
@@ -503,15 +448,15 @@
         isAuthReady = !!userId;
         
         if (userId) {
-          console.log('User signed in:', userId);
+          console.log('✅ User authenticated:', userId);
           hideAuthUI();
           await postSignInInit();
         } else {
-          console.log('No user ID, showing auth UI');
+          console.log('❌ No user ID found');
           showAuthUI();
         }
       } else if (event === 'INITIAL_SESSION') {
-        // Handle initial session
+        console.log('📋 Initial session event');
         if (session?.user) {
           user = session.user;
           userId = user.id;
@@ -524,30 +469,34 @@
       }
     });
 
-    // Initial session check - FIXED
+    // Initial session check dengan robust error handling
     (async () => {
       try {
-        console.log('Checking initial session...');
+        console.log('🔍 Checking initial session...');
         const { data, error } = await supabase.auth.getSession();
+        
         if (error) {
-          console.error('Session check error:', error);
+          console.error('❌ Session check error:', error);
           throw error;
         }
         
-        const session = data?.session ?? null;
-        console.log('Initial session:', session ? 'Found' : 'Not found');
+        const session = data?.session;
+        console.log('📋 Session found:', !!session);
         
         if (session && session.user) {
           user = session.user;
           userId = user.id;
           isAuthReady = true;
+          console.log('✅ User session valid:', userId);
           hideAuthUI();
           await postSignInInit();
         } else {
+          console.log('ℹ️ No active session, showing auth UI');
           showAuthUI();
         }
       } catch (err) {
-        console.error('Error checking session', err);
+        console.error('❌ Initial session check failed:', err);
+        showModal('Error', 'Gagal memeriksa sesi. Silakan refresh halaman.');
         showAuthUI();
       } finally {
         document.getElementById('loadingOverlay').classList.add('hidden');
@@ -555,204 +504,406 @@
     })();
 
     function showAuthUI() {
-      console.log('Showing auth UI');
+      console.log('👤 Showing auth UI');
       document.getElementById('mainContent').classList.add('hidden');
       document.getElementById('authWrapper').classList.remove('hidden');
-      // Reset auth forms
-      document.getElementById('loginForm').reset();
-      document.getElementById('registerForm').reset();
-      authMessage.textContent = '';
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
     
     function hideAuthUI() {
-      console.log('Hiding auth UI');
+      console.log('👤 Hiding auth UI');
       document.getElementById('authWrapper').classList.add('hidden');
       document.getElementById('mainContent').classList.remove('hidden');
     }
 
-    // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
+    // After sign-in initialization dengan comprehensive error handling
     async function postSignInInit() {
       if (!isAuthReady || !userId) {
-        console.log('No user ID, skipping postSignInInit');
+        console.log('⏸️ No user ID, skipping init');
         return;
       }
-      console.log('Running postSignInInit for user:', userId);
-      document.getElementById('userIdDisplay').textContent = `User ID: ${userId.substring(0,8)}...`;
+      
+      console.log('🚀 Starting post-sign-in initialization for user:', userId);
       
       try {
+        // Update UI first
+        document.getElementById('userIdDisplay').textContent = `User: ${user.email}`;
+        
+        // Test database connection dengan query sederhana
+        console.log('🔄 Testing database connection...');
+        const { data: testData, error: testError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .limit(1);
+        
+        if (testError) {
+          console.error('❌ Database connection test failed:', testError);
+          if (testError.code === '42P01') {
+            throw new Error('Tabel database belum dibuat. Silakan jalankan SQL setup di Supabase.');
+          }
+          throw new Error(`Database error: ${testError.message} (Code: ${testError.code})`);
+        }
+        console.log('✅ Database connection successful');
+        
+        // Lanjutkan dengan initialization normal
         await ensureProfileExists();
         await seedDefaults();
-        await fetchCategories();
-        await fetchAccounts();
-        await fetchBudgets();
-        await fetchTransactions();
-        setupRealtime();
+        await fetchAllData();
         renderPage('dashboard');
+        
+        console.log('✅ App initialization completed successfully');
+        
       } catch (error) {
-        console.error('Error in postSignInInit:', error);
+        console.error('❌ Post-sign-in initialization failed:', error);
+        showModal(
+          'Error Initialization', 
+          `Gagal memuat aplikasi: ${error.message}\n\nSilakan refresh halaman atau hubungi administrator.`,
+          false
+        );
       } finally {
         document.getElementById('loadingOverlay').classList.add('hidden');
       }
     }
 
+    // Fetch all data in parallel untuk performance
+    async function fetchAllData() {
+      console.log('🔄 Fetching all data...');
+      try {
+        await Promise.all([
+          fetchCategories(),
+          fetchAccounts(),
+          fetchBudgets(),
+          fetchTransactions()
+        ]);
+        console.log('✅ All data fetched successfully');
+      } catch (error) {
+        console.error('❌ Error fetching data:', error);
+        throw error;
+      }
+    }
+
     async function ensureProfileExists() {
       try {
-        const { data: existing, error: selErr } = await supabase
+        console.log('👤 Ensuring profile exists...');
+        const { data: existing, error } = await supabase
           .from('profiles')
           .select('id')
           .eq('id', userId)
           .limit(1)
           .maybeSingle();
-        if (selErr) throw selErr;
+        
+        if (error) throw error;
+        
         if (!existing) {
-          const nameFromMetadata = user?.user_metadata?.full_name || user?.user_metadata?.name || (document.getElementById('regName')?.value || null);
-          const fullName = nameFromMetadata || null;
-          const { error: insErr } = await supabase
+          console.log('➕ Creating new profile...');
+          const nameFromMetadata = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
+          const { error: insertError } = await supabase
             .from('profiles')
-            .insert([{ id: userId, email: user.email, full_name: fullName }], { returning: 'minimal' });
-          if (insErr) console.warn('profile insert warning', insErr);
+            .insert([{ 
+              id: userId, 
+              email: user.email, 
+              full_name: nameFromMetadata 
+            }]);
+          
+          if (insertError) {
+            console.error('❌ Profile creation failed:', insertError);
+            // Continue anyway, as this might be a permission issue
+          } else {
+            console.log('✅ Profile created successfully');
+          }
+        } else {
+          console.log('✅ Profile already exists');
         }
-      } catch (err) {
-        console.error('ensureProfileExists error', err);
+      } catch (error) {
+        console.error('❌ ensureProfileExists failed:', error);
+        // Continue anyway, as profile might be created later
       }
     }
 
     async function seedDefaults() {
       try {
-        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
+        console.log('🌱 Seeding default data...');
+        
+        // Seed categories jika kosong
+        const { data: catData, error: catError } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('profile_id', userId)
+          .limit(1);
+        
+        if (catError) {
+          console.warn('⚠️ Could not check categories:', catError);
+          return;
+        }
+        
         if (!catData || catData.length === 0) {
-          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
-          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
+          console.log('➕ Seeding default categories...');
+          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan', 'Belanja'];
+          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi', 'Bonus'];
           const toInsert = [
             ...defaultExpense.map(name => ({ profile_id: userId, name, type: 'expense' })),
             ...defaultIncome.map(name => ({ profile_id: userId, name, type: 'income' }))
           ];
-          const { error: insertErr } = await supabase.from('categories').insert(toInsert);
-          if (insertErr) console.warn('seed categories error', insertErr);
+          
+          const { error: insertError } = await supabase.from('categories').insert(toInsert);
+          if (insertError) {
+            console.warn('⚠️ Could not seed categories:', insertError);
+          } else {
+            console.log('✅ Default categories seeded');
+          }
         }
-
-        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
+        
+        // Seed accounts jika kosong
+        const { data: accData, error: accError } = await supabase
+          .from('accounts')
+          .select('id')
+          .eq('profile_id', userId)
+          .limit(1);
+        
+        if (accError) {
+          console.warn('⚠️ Could not check accounts:', accError);
+          return;
+        }
+        
         if (!accData || accData.length === 0) {
-          const defaultAccounts = ['Kas', 'Bank Utama', 'E-Wallet'];
+          console.log('➕ Seeding default accounts...');
+          const defaultAccounts = ['Kas', 'Bank Utama', 'E-Wallet', 'Tabungan'];
           const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
-          const { error: insErr } = await supabase.from('accounts').insert(toInsertAcc);
-          if (insErr) console.warn('seed accounts error', insErr);
+          
+          const { error: insertError } = await supabase.from('accounts').insert(toInsertAcc);
+          if (insertError) {
+            console.warn('⚠️ Could not seed accounts:', insertError);
+          } else {
+            console.log('✅ Default accounts seeded');
+          }
         }
-      } catch (err) {
-        console.error('seedDefaults error', err);
+        
+      } catch (error) {
+        console.error('❌ seedDefaults failed:', error);
+        // Continue anyway, as defaults might not be critical
       }
     }
 
-    // Fetch helpers
+    // Data fetching functions dengan error handling
     async function fetchCategories() {
       try {
-        const { data } = await supabase.from('categories').select('*').eq('profile_id', userId).order('created_at', { ascending: true });
+        console.log('🔄 Fetching categories...');
+        const { data, error } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('profile_id', userId)
+          .order('created_at', { ascending: true });
+        
+        if (error) throw error;
+        
         const rows = data || [];
         currentCategories.expense = rows.filter(r => r.type === 'expense').map(r => r.name);
         currentCategories.incomeSource = rows.filter(r => r.type === 'income').map(r => r.name);
-        if (currentPage === 'transaksi') {
-          renderPage('transaksi');
-        } else if (currentPage === 'pengaturan') {
-          renderPage('pengaturan');
-        }
-      } catch (err) {
-        console.error('fetchCategories', err);
+        console.log(`✅ Categories loaded: ${rows.length} items`);
+        
+      } catch (error) {
+        console.error('❌ fetchCategories failed:', error);
+        throw error;
       }
     }
+
     async function fetchAccounts() {
       try {
-        const { data } = await supabase.from('accounts').select('*').eq('profile_id', userId).order('created_at', { ascending: true });
+        console.log('🔄 Fetching accounts...');
+        const { data, error } = await supabase
+          .from('accounts')
+          .select('*')
+          .eq('profile_id', userId)
+          .order('created_at', { ascending: true });
+        
+        if (error) throw error;
+        
         const rows = data || [];
         currentCategories.account = rows.map(r => r.name);
-        if (currentPage === 'transaksi') {
-          renderPage('transaksi');
-        } else if (currentPage === 'pengaturan') {
-          renderPage('pengaturan');
-        }
-      } catch (err) {
-        console.error('fetchAccounts', err);
+        console.log(`✅ Accounts loaded: ${rows.length} items`);
+        
+      } catch (error) {
+        console.error('❌ fetchAccounts failed:', error);
+        throw error;
       }
     }
+
     async function fetchBudgets() {
       try {
-        const { data } = await supabase.from('budgets').select('*').eq('profile_id', userId);
+        console.log('🔄 Fetching budgets...');
+        const { data, error } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('profile_id', userId);
+        
+        if (error) throw error;
+        
         currentBudgets = data || [];
-      } catch (err) {
-        console.error('fetchBudgets', err);
+        console.log(`✅ Budgets loaded: ${data?.length || 0} items`);
+        
+      } catch (error) {
+        console.error('❌ fetchBudgets failed:', error);
+        // Don't throw for budgets, as they might not exist yet
       }
     }
+
     async function fetchTransactions() {
       try {
-        const { data } = await supabase.from('transactions').select('*').eq('profile_id', userId).order('date', { ascending: false });
+        console.log('🔄 Fetching transactions...');
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('profile_id', userId)
+          .order('date', { ascending: false });
+        
+        if (error) throw error;
+        
         currentTransactions = data || [];
-        if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-        if (currentPage === 'transaksi') renderTransactionsList();
-      } catch (err) {
-        console.error('fetchTransactions', err);
+        console.log(`✅ Transactions loaded: ${data?.length || 0} items`);
+        
+      } catch (error) {
+        console.error('❌ fetchTransactions failed:', error);
+        throw error;
       }
     }
 
-    // CRUD: categories/accounts
+    // CRUD operations dengan comprehensive error handling
     async function addCategory(type, name) {
       if (!name) return showModal('Perhatian', 'Nama kategori tidak boleh kosong.');
+      if (!isAuthReady || !userId) {
+        return showModal('Error', 'User tidak terautentikasi. Silakan login ulang.');
+      }
+      
       try {
-        const { error } = await supabase.from('categories').insert([{ profile_id: userId, name, type }]);
-        if (error) throw error;
+        console.log('➕ Adding category:', { type, name });
+        
+        const { data, error } = await supabase
+          .from('categories')
+          .insert([{ 
+            profile_id: userId, 
+            name: name.trim(), 
+            type: type 
+          }])
+          .select();
+        
+        if (error) {
+          console.error('❌ Supabase error:', error);
+          if (error.code === '42501') {
+            throw new Error('Permission denied. Pastikan RLS policies sudah di-setup di Supabase.');
+          } else if (error.code === '23505') {
+            throw new Error('Kategori dengan nama tersebut sudah ada.');
+          } else {
+            throw error;
+          }
+        }
+        
         await fetchCategories();
-        showModal('Sukses', `${name} berhasil ditambahkan ke ${type}.`);
+        showModal('Sukses', `Kategori "${name}" berhasil ditambahkan.`);
+        
       } catch (err) {
-        console.error('addCategory', err);
-        showModal('Gagal', `Gagal menambah kategori: ${err.message || err}`);
-      }
-    }
-    async function deleteCategory(name) {
-      try {
-        const { error } = await supabase.from('categories').delete().eq('profile_id', userId).eq('name', name);
-        if (error) throw error;
-        await fetchCategories();
-        showModal('Sukses', `${name} berhasil dihapus.`);
-      } catch (err) {
-        console.error('deleteCategory', err);
-        showModal('Gagal', `Gagal hapus kategori: ${err.message || err}`);
-      }
-    }
-    async function addAccount(name) {
-      if (!name) return showModal('Perhatian', 'Nama akun tidak boleh kosong.');
-      try {
-        const { error } = await supabase.from('accounts').insert([{ profile_id: userId, name }]);
-        if (error) throw error;
-        await fetchAccounts();
-        showModal('Sukses', `${name} berhasil ditambahkan.`);
-      } catch (err) {
-        console.error('addAccount', err);
-        showModal('Gagal', `Gagal menambah akun: ${err.message || err}`);
-      }
-    }
-    async function deleteAccount(name) {
-      try {
-        const { error } = await supabase.from('accounts').delete().eq('profile_id', userId).eq('name', name);
-        if (error) throw error;
-        await fetchAccounts();
-        showModal('Sukses', `${name} berhasil dihapus.`);
-      } catch (err) {
-        console.error('deleteAccount', err);
-        showModal('Gagal', `Gagal hapus akun: ${err.message || err}`);
+        console.error('❌ addCategory error:', err);
+        showModal('Gagal', `Gagal menambah kategori: ${err.message}`);
       }
     }
 
-    // CRUD: transactions (resolve names -> ids + store names)
+    async function deleteCategory(name) {
+      try {
+        const { error } = await supabase
+          .from('categories')
+          .delete()
+          .eq('profile_id', userId)
+          .eq('name', name);
+        
+        if (error) throw error;
+        await fetchCategories();
+        showModal('Sukses', `Kategori "${name}" berhasil dihapus.`);
+      } catch (err) {
+        console.error('❌ deleteCategory error:', err);
+        showModal('Gagal', `Gagal menghapus kategori: ${err.message}`);
+      }
+    }
+
+    async function addAccount(name) {
+      if (!name) return showModal('Perhatian', 'Nama akun tidak boleh kosong.');
+      if (!isAuthReady || !userId) {
+        return showModal('Error', 'User tidak terautentikasi. Silakan login ulang.');
+      }
+      
+      try {
+        console.log('➕ Adding account:', { name });
+        
+        const { data, error } = await supabase
+          .from('accounts')
+          .insert([{ 
+            profile_id: userId, 
+            name: name.trim() 
+          }])
+          .select();
+        
+        if (error) {
+          console.error('❌ Supabase error:', error);
+          if (error.code === '42501') {
+            throw new Error('Permission denied. Pastikan RLS policies sudah di-setup di Supabase.');
+          } else if (error.code === '23505') {
+            throw new Error('Akun dengan nama tersebut sudah ada.');
+          } else {
+            throw error;
+          }
+        }
+        
+        await fetchAccounts();
+        showModal('Sukses', `Akun "${name}" berhasil ditambahkan.`);
+        
+      } catch (err) {
+        console.error('❌ addAccount error:', err);
+        showModal('Gagal', `Gagal menambah akun: ${err.message}`);
+      }
+    }
+
+    async function deleteAccount(name) {
+      try {
+        const { error } = await supabase
+          .from('accounts')
+          .delete()
+          .eq('profile_id', userId)
+          .eq('name', name);
+        
+        if (error) throw error;
+        await fetchAccounts();
+        showModal('Sukses', `Akun "${name}" berhasil dihapus.`);
+      } catch (err) {
+        console.error('❌ deleteAccount error:', err);
+        showModal('Gagal', `Gagal menghapus akun: ${err.message}`);
+      }
+    }
+
+    // Transaction operations
     async function saveTransactionResolved(type, amount, dateStr, categoryName, accountName, description) {
       if (!isAuthReady || !userId) return;
+      
       try {
         let category_id = null;
         if (categoryName) {
-          const { data: cat } = await supabase.from('categories').select('id').eq('profile_id', userId).eq('name', categoryName).limit(1).maybeSingle();
+          const { data: cat } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('profile_id', userId)
+            .eq('name', categoryName)
+            .limit(1)
+            .maybeSingle();
           if (cat && cat.id) category_id = cat.id;
         }
+        
         let account_id = null;
         if (accountName) {
-          const { data: acc } = await supabase.from('accounts').select('id').eq('profile_id', userId).eq('name', accountName).limit(1).maybeSingle();
+          const { data: acc } = await supabase
+            .from('accounts')
+            .select('id')
+            .eq('profile_id', userId)
+            .eq('name', accountName)
+            .limit(1)
+            .maybeSingle();
           if (acc && acc.id) account_id = acc.id;
         }
 
@@ -771,34 +922,47 @@
 
         const { error } = await supabase.from('transactions').insert([payload]);
         if (error) throw error;
+        
         await fetchTransactions();
         showModal('Sukses', `${type} baru berhasil ditambahkan!`);
         document.getElementById('transactionForm')?.reset();
       } catch (err) {
-        console.error('saveTransactionResolved error', err);
-        showModal('Gagal', `Gagal menambahkan transaksi: ${err.message || err}`);
+        console.error('❌ saveTransactionResolved error:', err);
+        showModal('Gagal', `Gagal menambahkan transaksi: ${err.message}`);
       }
     }
 
     async function deleteTransaction(txId) {
       if (!isAuthReady || !userId) return;
       try {
-        const { error } = await supabase.from('transactions').delete().eq('id', txId).eq('profile_id', userId);
+        const { error } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('id', txId)
+          .eq('profile_id', userId);
+        
         if (error) throw error;
         await fetchTransactions();
         showModal('Sukses', 'Transaksi berhasil dihapus.');
       } catch (err) {
-        console.error('deleteTransaction error', err);
-        showModal('Gagal', `Gagal menghapus transaksi: ${err.message || err}`);
+        console.error('❌ deleteTransaction error:', err);
+        showModal('Gagal', `Gagal menghapus transaksi: ${err.message}`);
       }
     }
 
-    // Budget upsert
+    // Budget operations
     async function saveBudgetForPeriod(period, budgetsObj) {
       try {
         for (const categoryName of Object.keys(budgetsObj)) {
           const amount = budgetsObj[categoryName];
-          const { data: cat } = await supabase.from('categories').select('id').eq('profile_id', userId).eq('name', categoryName).limit(1).maybeSingle();
+          const { data: cat } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('profile_id', userId)
+            .eq('name', categoryName)
+            .limit(1)
+            .maybeSingle();
+          
           const category_id = cat?.id ?? null;
           const payload = {
             profile_id: userId,
@@ -806,19 +970,25 @@
             period,
             amount_limit: amount
           };
-          const { error } = await supabase.from('budgets').upsert(payload, { onConflict: ['profile_id','category_id','period'] });
+          
+          const { error } = await supabase
+            .from('budgets')
+            .upsert(payload, { onConflict: ['profile_id','category_id','period'] });
+          
           if (error) throw error;
         }
+        
         await fetchBudgets();
-        showModal('Sukses', 'Budget tersimpan.');
+        showModal('Sukses', 'Budget berhasil disimpan.');
       } catch (err) {
-        console.error('saveBudgetForPeriod error', err);
-        showModal('Gagal', `Gagal menyimpan budget: ${err.message || err}`);
+        console.error('❌ saveBudgetForPeriod error:', err);
+        showModal('Gagal', `Gagal menyimpan budget: ${err.message}`);
       }
     }
 
-    // UI rendering (templates reused from original HTML logic)
+    // UI rendering functions
     function renderPage(pageName) {
+      console.log(`📄 Rendering page: ${pageName}`);
       currentPage = pageName;
       const container = document.getElementById('pageContainer');
       const navButtons = document.querySelectorAll('.nav-link');
@@ -851,72 +1021,123 @@
       }
 
       if (pageName === 'dashboard') {
-        document.getElementById('prevPeriod').addEventListener('click', () => changePeriod(-1));
-        document.getElementById('nextPeriod').addEventListener('click', () => changePeriod(1));
+        const prevBtn = document.getElementById('prevPeriod');
+        const nextBtn = document.getElementById('nextPeriod');
+        if (prevBtn) prevBtn.addEventListener('click', () => changePeriod(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => changePeriod(1));
       }
     }
 
-    // Templates (copied/kept from your original layout)
+    // Template functions
     function renderDashboardPageTemplate() {
       return `
-        <div class="flex flex-col sm:flex-row items-center justify-between mb-6 space-y-3 sm:space-y-0 sm:space-x-3">
-          <h2 id="currentPeriodDisplay" class="text-xl font-bold">Periode: Loading...</h2>
-          <div class="flex space-x-2 w-full sm:w-auto">
-            <button id="prevPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
-              &larr; Sebelumnya
-            </button>
-            <button id="nextPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
-              Berikutnya &rarr;
-            </button>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--income-color);">
-            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pemasukan</h3>
-            <p id="totalIncome" class="text-2xl font-extrabold" style="color: var(--income-color);">Rp -</p>
-          </div>
-          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--expense-color);">
-            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pengeluaran</h3>
-            <p id="totalExpense" class="text-2xl font-extrabold" style="color: var(--expense-color);">Rp -</p>
-          </div>
-          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--balance-color);">
-            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Saldo Bersih</h3>
-            <p id="netBalance" class="text-2xl font-extrabold" style="color: var(--balance-color);">Rp -</p>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div class="card p-4 rounded-xl lg:col-span-1">
-            <h3 class="text-lg font-bold mb-2">Status Budget Pengeluaran (${formatPeriod(currentPeriod)})</h3>
-            <div id="budgetStatusContainer">
-              <div class="flex justify-center items-center h-24"><div class="spinner"></div></div>
+        <div class="space-y-6">
+          <div class="flex flex-col sm:flex-row items-center justify-between mb-6 space-y-3 sm:space-y-0 sm:space-x-3">
+            <h2 id="currentPeriodDisplay" class="text-xl font-bold">Periode: ${formatPeriod(currentPeriod)}</h2>
+            <div class="flex space-x-2 w-full sm:w-auto">
+              <button id="prevPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
+                &larr; Sebelumnya
+              </button>
+              <button id="nextPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
+                Berikutnya &rarr;
+              </button>
             </div>
           </div>
 
-          <div class="card p-4 rounded-xl lg:col-span-2 order-last lg:order-none">
-            <h3 class="text-xl font-bold mb-2">Grafik Tren Bulanan (12 Bulan Terakhir)</h3>
-            <div id="monthlyTrendChart" class="w-full" style="height: 350px;">
-              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+            <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid ${incomeColor};">
+              <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pemasukan</h3>
+              <p id="totalIncome" class="text-2xl font-extrabold" style="color: ${incomeColor};">Rp -</p>
+            </div>
+            <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid ${expenseColor};">
+              <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pengeluaran</h3>
+              <p id="totalExpense" class="text-2xl font-extrabold" style="color: ${expenseColor};">Rp -</p>
+            </div>
+            <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid ${balanceColor};">
+              <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Saldo Bersih</h3>
+              <p id="netBalance" class="text-2xl font-extrabold" style="color: ${balanceColor};">Rp -</p>
             </div>
           </div>
-        </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div class="card p-4 rounded-xl">
-            <h3 class="text-lg font-bold mb-2">Proporsi Pengeluaran</h3>
-            <div id="pieChartExpense" class="w-full" style="height: 300px;">
-              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="card p-4 rounded-xl lg:col-span-1">
+              <h3 class="text-lg font-bold mb-2">Status Budget Pengeluaran (${formatPeriod(currentPeriod)})</h3>
+              <div id="budgetStatusContainer">
+                <div class="text-center p-4 text-gray-500">
+                  <p>Fitur budget akan segera hadir</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card p-4 rounded-xl lg:col-span-2 order-last lg:order-none">
+              <h3 class="text-xl font-bold mb-2">Statistik Aplikasi</h3>
+              <div class="space-y-4 p-4">
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">Total Transaksi:</span>
+                  <span class="font-bold">${currentTransactions.length}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">Kategori Pengeluaran:</span>
+                  <span class="font-bold">${currentCategories.expense.length}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">Sumber Pemasukan:</span>
+                  <span class="font-bold">${currentCategories.incomeSource.length}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">Akun/Dompet:</span>
+                  <span class="font-bold">${currentCategories.account.length}</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="card p-4 rounded-xl">
-            <h3 class="text-lg font-bold mb-2">Proporsi Pemasukan</h3>
-            <div id="pieChartIncome" class="w-full" style="height: 300px;">
-              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="card p-4 rounded-xl">
+              <h3 class="text-lg font-bold mb-2">5 Transaksi Terbaru</h3>
+              <div id="recentTransactions" class="space-y-2">
+                ${renderRecentTransactions()}
+              </div>
+            </div>
+            <div class="card p-4 rounded-xl">
+              <h3 class="text-lg font-bold mb-2">Quick Actions</h3>
+              <div class="space-y-3">
+                <button onclick="renderPage('transaksi')" class="w-full bg-green-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-green-600">
+                  + Tambah Transaksi
+                </button>
+                <button onclick="renderPage('pengaturan')" class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-600">
+                  ⚙️ Pengaturan
+                </button>
+                <button onclick="window.debugApp()" class="w-full bg-gray-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-gray-600">
+                  🐛 Debug Info
+                </button>
+              </div>
             </div>
           </div>
         </div>
       `;
+    }
+
+    function renderRecentTransactions() {
+      const recent = currentTransactions.slice(0, 5);
+      if (recent.length === 0) {
+        return '<p class="text-gray-500 text-center p-4">Belum ada transaksi</p>';
+      }
+      
+      return recent.map(tx => {
+        const isExpense = tx.type === 'Pengeluaran';
+        const color = isExpense ? expenseColor : incomeColor;
+        const sign = isExpense ? '-' : '+';
+        return `
+          <div class="flex justify-between items-center p-2 border-b">
+            <div class="flex-grow">
+              <p class="font-semibold text-sm">${tx.description || tx.category_name || 'Transaksi'}</p>
+              <p class="text-xs text-gray-500">${tx.date} • ${tx.category_name || '-'}</p>
+            </div>
+            <p class="font-bold text-sm" style="color: ${color};">${sign} ${formatRupiah(tx.amount).replace('Rp','')}</p>
+          </div>
+        `;
+      }).join('');
     }
 
     function renderTransactionPageTemplate() {
@@ -924,6 +1145,7 @@
       const expenseOptions = currentCategories.expense.map(cat => `<option value="${cat}">${cat}</option>`).join('');
       const incomeSourceOptions = currentCategories.incomeSource.map(cat => `<option value="${cat}">${cat}</option>`).join('');
       const accountOptions = currentCategories.account.map(acc => `<option value="${acc}">${acc}</option>`).join('');
+      
       return `
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div class="lg:col-span-1 card p-6 rounded-xl">
@@ -932,8 +1154,8 @@
               <div>
                 <label class="block text-sm font-medium mb-1">Tipe Transaksi</label>
                 <select id="txType" name="type" required class="w-full p-2 border border-gray-300 rounded-lg">
-                  <option value="Pengeluaran" data-color="${expenseColor}">Pengeluaran</option>
-                  <option value="Pemasukan" data-color="${incomeColor}">Pemasukan</option>
+                  <option value="Pengeluaran">Pengeluaran</option>
+                  <option value="Pemasukan">Pemasukan</option>
                 </select>
               </div>
               <div>
@@ -948,17 +1170,15 @@
               <div id="categoryContainer">
                 <label for="txCategory" class="block text-sm font-medium mb-1" id="categoryLabel">Kategori Pengeluaran</label>
                 <select id="txCategory" name="category" required class="w-full p-2 border border-gray-300 rounded-lg">
-                  ${expenseOptions}
+                  ${expenseOptions || '<option value="">Belum ada kategori</option>'}
                 </select>
-                <p id="categoryHint" class="text-xs text-gray-500 mt-1">Pilih kategori untuk pengeluaran ini.</p>
               </div>
 
               <div>
                 <label for="txAccount" class="block text-sm font-medium mb-1">Akun / Dompet</label>
                 <select id="txAccount" name="account" required class="w-full p-2 border border-gray-300 rounded-lg">
-                  ${accountOptions}
+                  ${accountOptions || '<option value="">Belum ada akun</option>'}
                 </select>
-                <p class="text-xs text-gray-500 mt-1">Akun asal uang (untuk pengeluaran) atau akun tujuan uang (untuk pemasukan).</p>
               </div>
 
               <div>
@@ -972,28 +1192,6 @@
 
           <div class="lg:col-span-2 card p-6 rounded-xl">
             <h2 class="text-xl font-bold mb-4">Daftar Semua Transaksi</h2>
-
-            <div class="relative mb-4">
-              <input type="text" id="txSearchInput" placeholder="Cari berdasarkan deskripsi atau kategori..." class="w-full p-2 pl-10 border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-
-            <div class="flex space-x-3 mb-4 flex-wrap">
-              <select id="txFilterType" class="p-2 border border-gray-300 rounded-lg text-sm mb-2">
-                <option value="all">Semua Tipe</option>
-                <option value="Pengeluaran">Pengeluaran</option>
-                <option value="Pemasukan">Pemasukan</option>
-              </select>
-              <select id="txFilterCategory" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
-                <option value="all">Semua Kategori/Sumber</option>
-              </select>
-              <select id="txFilterAccount" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
-                <option value="all">Semua Akun/Dompet</option>
-              </select>
-            </div>
-
             <div id="transactionsList" class="space-y-3 max-h-[70vh] overflow-y-auto">
               <p class="text-gray-500 text-center p-4">Memuat transaksi...</p>
             </div>
@@ -1004,29 +1202,13 @@
 
     function renderBudgetPageTemplate() {
       return `
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div class="lg:col-span-1 card p-6 rounded-xl space-y-4">
-            <h2 class="text-xl font-bold mb-4">Status Budget (Periode Ini)</h2>
-            <div id="budgetStatusContainerPage">
-              <p class="text-gray-500 text-center p-4">Memuat status budget...</p>
-            </div>
-          </div>
-
-          <div class="lg:col-span-2 card p-6 rounded-xl">
-            <h2 class="text-xl font-bold mb-4">Atur Budget Pengeluaran Bulanan</h2>
-
-            <div class="flex space-x-3 mb-4 items-center flex-wrap">
-              <label class="font-semibold text-gray-700">Periode Budget:</label>
-              <select id="budgetPeriodSelect" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-grow-0 min-w-[150px] mb-2 sm:mb-0"></select>
-              <button id="setBudgetBtn" class="btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">Tampilkan Budget</button>
-            </div>
-
-            <form id="budgetForm" class="space-y-3 p-4 border rounded-xl bg-gray-50">
-              <div id="budgetInputs" class="space-y-3">
-                <p class="text-gray-500">Pilih periode di atas untuk mengatur budget.</p>
-              </div>
-              <button type="submit" class="btn-primary w-full text-white font-semibold py-2 rounded-lg mt-4 hidden" id="saveBudgetBtn">Simpan Budget</button>
-            </form>
+        <div class="card p-6 rounded-xl">
+          <h2 class="text-2xl font-bold mb-4">Manajemen Budget</h2>
+          <div class="text-center p-8">
+            <div class="text-gray-400 text-6xl mb-4">💰</div>
+            <h3 class="text-xl font-semibold mb-2">Fitur Segera Hadir</h3>
+            <p class="text-gray-600 mb-4">Fitur manajemen budget sedang dalam pengembangan.</p>
+            <button onclick="renderPage('dashboard')" class="btn-primary text-white px-4 py-2 rounded-lg">Kembali ke Dashboard</button>
           </div>
         </div>
       `;
@@ -1036,20 +1218,37 @@
       return `
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
-            <h2 class="text-xl font-bold mb-4">Pengaturan Kategori & Sumber/Akun</h2>
+            <h2 class="text-xl font-bold mb-4">Pengaturan Kategori & Akun</h2>
 
             <div class="border p-4 rounded-lg bg-gray-50">
-              <h3 class="text-lg font-semibold mb-3" style="color: ${expenseColor};">Kategori Pengeluaran (Expense)</h3>
-              <div id="expenseCategoryList" class="mb-4 space-y-2"></div>
+              <h3 class="text-lg font-semibold mb-3" style="color: ${expenseColor};">Kategori Pengeluaran</h3>
+              <div id="expenseCategoryList" class="mb-4 space-y-2 max-h-40 overflow-y-auto">
+                ${currentCategories.expense.map(cat => `
+                  <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm">
+                    <span>${cat}</span>
+                    <button data-name="${cat}" data-type="expense" class="delete-cat-btn text-red-500 hover:text-red-700 text-sm">Hapus</button>
+                  </div>
+                `).join('')}
+                ${currentCategories.expense.length === 0 ? '<p class="text-gray-500 text-center p-2">Belum ada kategori</p>' : ''}
+              </div>
               <form id="addExpenseCategoryForm" class="flex space-x-2">
-                <input type="text" id="newExpenseCategory" placeholder="Nama Kategori Baru" required class="flex-grow p-2 border rounded-lg text-sm">
+                <input type="text" id="newExpenseCategory" placeholder
+                                <input type="text" id="newExpenseCategory" placeholder="Nama Kategori Baru" required class="flex-grow p-2 border rounded-lg text-sm">
                 <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
               </form>
             </div>
 
             <div class="border p-4 rounded-lg bg-gray-50">
-              <h3 class="text-lg font-semibold mb-3" style="color: ${incomeColor};">Sumber Pemasukan (Income Source)</h3>
-              <div id="incomeSourceList" class="mb-4 space-y-2"></div>
+              <h3 class="text-lg font-semibold mb-3" style="color: ${incomeColor};">Sumber Pemasukan</h3>
+              <div id="incomeSourceList" class="mb-4 space-y-2 max-h-40 overflow-y-auto">
+                ${currentCategories.incomeSource.map(cat => `
+                  <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm">
+                    <span>${cat}</span>
+                    <button data-name="${cat}" data-type="income" class="delete-cat-btn text-red-500 hover:text-red-700 text-sm">Hapus</button>
+                  </div>
+                `).join('')}
+                ${currentCategories.incomeSource.length === 0 ? '<p class="text-gray-500 text-center p-2">Belum ada sumber pemasukan</p>' : ''}
+              </div>
               <form id="addIncomeSourceForm" class="flex space-x-2">
                 <input type="text" id="newIncomeSource" placeholder="Nama Sumber Pemasukan Baru" required class="flex-grow p-2 border rounded-lg text-sm">
                 <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
@@ -1057,43 +1256,85 @@
             </div>
 
             <div class="border p-4 rounded-lg bg-gray-50">
-              <h3 class="text-lg font-semibold mb-3" style="color: ${balanceColor};">Akun / Dompet (Account)</h3>
-              <div id="accountList" class="mb-4 space-y-2"></div>
+              <h3 class="text-lg font-semibold mb-3" style="color: ${balanceColor};">Akun / Dompet</h3>
+              <div id="accountList" class="mb-4 space-y-2 max-h-40 overflow-y-auto">
+                ${currentCategories.account.map(acc => `
+                  <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm">
+                    <span>${acc}</span>
+                    <button data-name="${acc}" data-type="account" class="delete-cat-btn text-red-500 hover:text-red-700 text-sm">Hapus</button>
+                  </div>
+                `).join('')}
+                ${currentCategories.account.length === 0 ? '<p class="text-gray-500 text-center p-2">Belum ada akun</p>' : ''}
+              </div>
               <form id="addAccountForm" class="flex space-x-2">
-                <input type="text" id="newAccount" placeholder="Nama Akun/Dompet Baru (e.g., Kas, Bank)" required class="flex-grow p-2 border rounded-lg text-sm">
+                <input type="text" id="newAccount" placeholder="Nama Akun/Dompet Baru" required class="flex-grow p-2 border rounded-lg text-sm">
                 <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
               </form>
-              <p class="text-xs text-gray-500 mt-2">Ini adalah tempat fisik uang Anda berada.</p>
             </div>
           </div>
 
           <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
-            <h2 class="text-xl font-bold mb-4">Pengaturan Lain</h2>
+            <h2 class="text-xl font-bold mb-4">Pengaturan & Tools</h2>
 
             <div class="border p-4 rounded-lg bg-gray-50">
-              <h3 class="text-lg font-semibold mb-3">Pilih Tema Aplikasi</h3>
-              <p class="text-sm text-gray-600">Saat ini menggunakan tema Default (Hijau Soft). Fitur kustomisasi tema akan hadir segera.</p>
-              <div class="flex space-x-3 mt-3">
-                <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Default (Aktif)</button>
-                <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Gelap</button>
+              <h3 class="text-lg font-semibold mb-3">Debug & Testing</h3>
+              <div class="space-y-3">
+                <button onclick="window.testAddCategory()" class="w-full bg-green-500 text-white py-2 px-4 rounded-lg text-sm hover:bg-green-600">
+                  Test Tambah Kategori
+                </button>
+                <button onclick="window.testAddAccount()" class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg text-sm hover:bg-blue-600">
+                  Test Tambah Akun
+                </button>
+                <button onclick="window.debugApp()" class="w-full bg-gray-500 text-white py-2 px-4 rounded-lg text-sm hover:bg-gray-600">
+                  Show Debug Info
+                </button>
               </div>
+              <div id="testResults" class="mt-3 p-3 bg-white rounded border hidden"></div>
+            </div>
+
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3">Status Aplikasi</h3>
+              <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                  <span>User ID:</span>
+                  <span class="font-mono">${userId ? userId.substring(0, 8) + '...' : 'Not logged in'}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Transaksi:</span>
+                  <span>${currentTransactions.length} items</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Kategori:</span>
+                  <span>${currentCategories.expense.length + currentCategories.incomeSource.length} items</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Akun:</span>
+                  <span>${currentCategories.account.length} items</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3">Reset Data</h3>
+              <p class="text-sm text-gray-600 mb-3">Hati-hati! Tindakan ini tidak dapat dibatalkan.</p>
+              <button onclick="showModal('Reset Data', 'Yakin ingin menghapus semua data transaksi?', true, () => resetAllTransactions())" 
+                      class="w-full bg-red-500 text-white py-2 px-4 rounded-lg text-sm hover:bg-red-600">
+                Hapus Semua Transaksi
+              </button>
             </div>
           </div>
         </div>
       `;
     }
 
-    // UI functions: setupTransactionForm, renderTransactionsList, loadDashboard, charts, budgets, settings
+    // UI helper functions
     function setupTransactionForm() {
       const form = document.getElementById('transactionForm');
       if (!form) return;
+      
       const txTypeSelect = document.getElementById('txType');
       const txCategorySelect = document.getElementById('txCategory');
       const categoryLabel = document.getElementById('categoryLabel');
-      const categoryHint = document.getElementById('categoryHint');
-      const filterCategorySelect = document.getElementById('txFilterCategory');
-      const filterAccountSelect = document.getElementById('txFilterAccount');
-      const searchInput = document.getElementById('txSearchInput');
 
       function updateCategoryOptions() {
         const type = txTypeSelect.value;
@@ -1101,36 +1342,15 @@
         if (type === 'Pengeluaran') {
           options = currentCategories.expense.map(cat => `<option value="${cat}">${cat}</option>`).join('');
           categoryLabel.textContent = 'Kategori Pengeluaran';
-          categoryHint.textContent = 'Pilih kategori untuk pengeluaran ini.';
         } else {
           options = currentCategories.incomeSource.map(cat => `<option value="${cat}">${cat}</option>`).join('');
           categoryLabel.textContent = 'Sumber Pemasukan';
-          categoryHint.textContent = 'Pilih sumber dari pemasukan ini (e.g., Gaji).';
         }
-        txCategorySelect.innerHTML = options || '<option value="">(Tambahkan kategori di Pengaturan)</option>';
-      }
-
-      function updateFilterOptions() {
-        if (filterCategorySelect) {
-          const allCategories = [
-            ...currentCategories.expense.map(c => `<option value="${c}">[K] ${c}</option>`),
-            ...currentCategories.incomeSource.map(c => `<option value="${c}">[S] ${c}</option>`)
-          ].join('');
-          filterCategorySelect.innerHTML = `<option value="all">Semua Kategori/Sumber</option>` + allCategories;
-          filterCategorySelect.addEventListener('change', renderTransactionsList);
-        }
-        if (filterAccountSelect) {
-          const allAccounts = currentCategories.account.map(acc => `<option value="${acc}">${acc}</option>`).join('');
-          filterAccountSelect.innerHTML = `<option value="all">Semua Akun/Dompet</option>` + allAccounts;
-          filterAccountSelect.addEventListener('change', renderTransactionsList);
-        }
+        txCategorySelect.innerHTML = options || '<option value="">Belum ada kategori</option>';
       }
 
       txTypeSelect.addEventListener('change', updateCategoryOptions);
-      if (searchInput) searchInput.addEventListener('input', renderTransactionsList);
-
       updateCategoryOptions();
-      updateFilterOptions();
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1140,74 +1360,88 @@
         const category = form.elements['category'].value;
         const account = form.elements['account'].value;
         const description = form.elements['description'].value;
+        
         if (!category) return showModal('Gagal', 'Kategori/Sumber harus dipilih.');
         if (!account) return showModal('Gagal', 'Akun/Dompet harus dipilih.');
 
         await saveTransactionResolved(type, amount, date, category, account, description);
       });
-      document.getElementById('txFilterType')?.addEventListener('change', renderTransactionsList);
     }
 
     function renderTransactionsList() {
       const container = document.getElementById('transactionsList');
       if (!container) return;
-      const filterType = document.getElementById('txFilterType')?.value || 'all';
-      const filterCategory = document.getElementById('txFilterCategory')?.value || 'all';
-      const filterAccount = document.getElementById('txFilterAccount')?.value || 'all';
-      const searchTerm = document.getElementById('txSearchInput')?.value.toLowerCase().trim() || '';
 
-      const filtered = (currentTransactions || [])
-        .filter(tx => (filterType === 'all' || tx.type === filterType))
-        .filter(tx => {
-          if (filterCategory === 'all') return true;
-          const name = tx.category_name || tx.category || '';
-          return name === filterCategory;
-        })
-        .filter(tx => {
-          if (filterAccount === 'all') return true;
-          const a = tx.account_name || tx.account || '';
-          return a === filterAccount;
-        })
-        .filter(tx => {
-          if (!searchTerm) return true;
-          const hay = `${tx.description || ''} ${tx.category_name || tx.category || ''} ${tx.account_name || tx.account || ''}`.toLowerCase();
-          return hay.includes(searchTerm);
-        })
-        .sort((a,b) => new Date(b.date) - new Date(a.date));
-
-      container.innerHTML = '';
-      if (filtered.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center p-4">Belum ada transaksi. Tambahkan transaksi pertama Anda menggunakan formulir di kiri.</p>';
+      if (currentTransactions.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-center p-4">Belum ada transaksi. Tambahkan transaksi pertama Anda!</p>';
         return;
       }
 
-      filtered.forEach(tx => {
+      const transactionsHtml = currentTransactions.map(tx => {
         const isExpense = tx.type === 'Pengeluaran';
         const color = isExpense ? expenseColor : incomeColor;
         const sign = isExpense ? '-' : '+';
-        const txEl = document.createElement('div');
-        txEl.className = 'flex justify-between items-center p-3 rounded-lg card transition hover:shadow-md hover:border-gray-300';
-        txEl.innerHTML = `
-          <div class="flex-grow">
-            <p class="font-semibold text-sm" style="color: ${color};">${tx.description || tx.category_name || tx.category || 'Transaksi'}</p>
-            <p class="text-xs text-gray-500">${tx.date} | ${tx.category_name || tx.category || '-'} | Akun: ${tx.account_name || tx.account || '-'}</p>
-          </div>
-          <div class="flex items-center space-x-3">
-            <p class="font-bold text-sm ml-2" style="color: ${color};">${sign} ${formatRupiah(tx.amount).replace('Rp','')}</p>
-            <button data-id="${tx.id}" class="delete-tx-btn text-red-400 hover:text-red-600 transition">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
+        return `
+          <div class="flex justify-between items-center p-3 rounded-lg card transition hover:shadow-md">
+            <div class="flex-grow">
+              <p class="font-semibold text-sm" style="color: ${color};">${tx.description || tx.category_name || tx.category || 'Transaksi'}</p>
+              <p class="text-xs text-gray-500">${tx.date} | ${tx.category_name || tx.category || '-'} | Akun: ${tx.account_name || tx.account || '-'}</p>
+            </div>
+            <div class="flex items-center space-x-3">
+              <p class="font-bold text-sm ml-2" style="color: ${color};">${sign} ${formatRupiah(tx.amount).replace('Rp','')}</p>
+              <button data-id="${tx.id}" class="delete-tx-btn text-red-400 hover:text-red-600 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
           </div>
         `;
-        container.appendChild(txEl);
-      });
+      }).join('');
 
+      container.innerHTML = transactionsHtml;
+
+      // Add event listeners to delete buttons
       container.querySelectorAll('.delete-tx-btn').forEach(button => {
         button.addEventListener('click', (e) => {
           const txId = e.currentTarget.getAttribute('data-id');
           showModal('Konfirmasi Hapus', 'Anda yakin ingin menghapus transaksi ini?', true, () => deleteTransaction(txId));
+        });
+      });
+    }
+
+    function renderSettingsPage() {
+      // Add event listeners for forms
+      document.getElementById('addExpenseCategoryForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const input = document.getElementById('newExpenseCategory');
+        addCategory('expense', input.value.trim());
+        input.value = '';
+      });
+      
+      document.getElementById('addIncomeSourceForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const input = document.getElementById('newIncomeSource');
+        addCategory('income', input.value.trim());
+        input.value = '';
+      });
+      
+      document.getElementById('addAccountForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const input = document.getElementById('newAccount');
+        addAccount(input.value.trim());
+        input.value = '';
+      });
+
+      // Add event listeners for delete buttons
+      document.querySelectorAll('.delete-cat-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+          const name = e.currentTarget.getAttribute('data-name');
+          const type = e.currentTarget.getAttribute('data-type');
+          showModal('Konfirmasi Hapus', `Yakin ingin menghapus "${name}"?`, true, () => {
+            if (type === 'account') deleteAccount(name);
+            else deleteCategory(name);
+          });
         });
       });
     }
@@ -1217,183 +1451,33 @@
       const displayEl = document.getElementById('currentPeriodDisplay');
       if (displayEl) displayEl.textContent = `Periode: ${formatPeriod(currentPeriod)}`;
 
-      const filteredTx = (currentTransactions || []).filter(tx => tx.period === currentPeriod);
+      const filteredTx = currentTransactions.filter(tx => tx.period === currentPeriod);
 
       let totalIncome = 0;
       let totalExpense = 0;
-      const expenseMap = new Map();
 
       filteredTx.forEach(tx => {
         const amount = Number(tx.amount) || 0;
         if (tx.type === 'Pemasukan') totalIncome += amount;
-        else if (tx.type === 'Pengeluaran') {
-          totalExpense += amount;
-          const categoryName = tx.category_name || tx.category || 'Lain-lain';
-          expenseMap.set(categoryName, (expenseMap.get(categoryName) || 0) + amount);
-        }
+        else if (tx.type === 'Pengeluaran') totalExpense += amount;
       });
 
       const netBalance = totalIncome - totalExpense;
       const totalIncomeEl = document.getElementById('totalIncome');
       const totalExpenseEl = document.getElementById('totalExpense');
       const netBalanceEl = document.getElementById('netBalance');
+      
       if (totalIncomeEl) totalIncomeEl.textContent = formatRupiah(totalIncome);
       if (totalExpenseEl) totalExpenseEl.textContent = formatRupiah(totalExpense);
       if (netBalanceEl) {
         netBalanceEl.textContent = formatRupiah(netBalance);
         netBalanceEl.style.color = netBalance >= 0 ? incomeColor : expenseColor;
       }
-
-      if (typeof renderDashboardCharts === 'function') {
-        renderDashboardCharts(filteredTx);
-      } else {
-        const pieExpense = document.getElementById('pieChartExpense');
-        const pieIncome = document.getElementById('pieChartIncome');
-        if (pieExpense) pieExpense.innerHTML = `<div class="text-sm text-gray-500 p-4">Chart pengeluaran akan tampil di sini.</div>`;
-        if (pieIncome) pieIncome.innerHTML = `<div class="text-sm text-gray-500 p-4">Chart pemasukan akan tampil di sini.</div>`;
-      }
-
-      if (typeof renderMonthlyTrendChart === 'function') {
-        renderMonthlyTrendChart();
-      }
     }
 
-    // Budget & Settings simplified rendering
     function renderBudgetPage() {
-      const totalExpense = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((s,tx) => s + (Number(tx.amount)||0),0);
-      const expenseMap = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((map,tx) => {
-        const cat = tx.category_name || tx.category || 'Lain-lain';
-        map.set(cat, (map.get(cat)||0) + (Number(tx.amount)||0));
-        return map;
-      }, new Map());
-      renderBudgetStatusPage(totalExpense, expenseMap);
-
-      const budgetPeriodSelect = document.getElementById('budgetPeriodSelect');
-      const budgetInputsContainer = document.getElementById('budgetInputs');
-      const budgetForm = document.getElementById('budgetForm');
-      if (!budgetPeriodSelect) return;
-      const currentMonth = new Date();
-      budgetPeriodSelect.innerHTML = '';
-      for (let i=-12;i<=12;i++){
-        const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth()+i);
-        const period = date.toISOString().substring(0,7);
-        const display = formatPeriod(period);
-        const option = document.createElement('option');
-        option.value = period;
-        option.textContent = display;
-        if (period === currentPeriod) option.selected=true;
-        budgetPeriodSelect.appendChild(option);
-      }
-
-      function populateBudgetInputs() {
-        const selectedPeriod = budgetPeriodSelect.value;
-        const inputs = [];
-        if (currentCategories.expense.length === 0) {
-          budgetInputsContainer.innerHTML = `<p class="text-red-500">Harap tambahkan Kategori Pengeluaran di halaman Pengaturan terlebih dahulu.</p>`;
-          document.getElementById('saveBudgetBtn').classList.add('hidden');
-          return;
-        }
-        currentCategories.expense.forEach(category => {
-          const value = 0;
-          inputs.push(`
-            <div>
-              <label class="block text-sm font-medium mb-1">${category}</label>
-              <input type="number" data-category="${category}" value="${value}" min="0" class="w-full p-2 border border-gray-300 rounded-lg" placeholder="Budget untuk ${category}">
-            </div>
-          `);
-        });
-        budgetInputsContainer.innerHTML = inputs.join('');
-        document.getElementById('saveBudgetBtn').classList.remove('hidden');
-      }
-
-      document.getElementById('setBudgetBtn').addEventListener('click', populateBudgetInputs);
-      populateBudgetInputs();
-
-      budgetForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const selectedPeriod = budgetPeriodSelect.value;
-        const budgetInputs = budgetInputsContainer.querySelectorAll('input');
-        const newBudgets = {};
-        budgetInputs.forEach(input => {
-          const category = input.getAttribute('data-category');
-          const amount = parseFloat(input.value) || 0;
-          if (amount > 0) newBudgets[category] = amount;
-        });
-        if (Object.keys(newBudgets).length===0) return showModal('Perhatian','Masukkan minimal 1 nilai budget.');
-        await saveBudgetForPeriod(selectedPeriod, newBudgets);
-      });
-    }
-
-    function renderBudgetStatusPage(totalExpense, expenseMap) {
-      const budgetContainer = document.getElementById('budgetStatusContainerPage');
-      if (!budgetContainer) return;
-      budgetContainer.innerHTML = `<h3 class="text-lg font-bold mb-3">Budget Periode ${formatPeriod(currentPeriod)}</h3>`;
-      const periodBudget = currentBudgets.find(b => b.period===currentPeriod);
-      if (!periodBudget) {
-        budgetContainer.innerHTML += `<p class="text-gray-500 p-4 text-center">Belum ada budget yang ditetapkan untuk periode ini.</p>`;
-        return;
-      }
-      budgetContainer.innerHTML += `<p class="text-sm text-gray-600">Budget detail ditemukan, buka input Budget untuk melihat & ubah.</p>`;
-    }
-
-    function renderSettingsPage() {
-      const expenseList = document.getElementById('expenseCategoryList');
-      if (expenseList) {
-        expenseList.innerHTML = currentCategories.expense.map(cat => `
-            <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-red-100">
-                <span>${cat}</span>
-                <button data-name="${cat}" data-type="expense" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
-            </div>
-        `).join('');
-      }
-      const incomeSourceList = document.getElementById('incomeSourceList');
-      if (incomeSourceList) {
-        incomeSourceList.innerHTML = currentCategories.incomeSource.map(cat => `
-            <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-green-100">
-                <span>${cat}</span>
-                <button data-name="${cat}" data-type="income" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
-            </div>
-        `).join('');
-      }
-      const accountList = document.getElementById('accountList');
-      if (accountList) {
-        accountList.innerHTML = currentCategories.account.map(cat => `
-            <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-blue-100">
-                <span>${cat}</span>
-                <button data-name="${cat}" data-type="account" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
-            </div>
-        `).join('');
-      }
-
-      document.getElementById('addExpenseCategoryForm')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const input = document.getElementById('newExpenseCategory');
-        addCategory('expense', input.value.trim());
-        input.value = '';
-      });
-      document.getElementById('addIncomeSourceForm')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const input = document.getElementById('newIncomeSource');
-        addCategory('income', input.value.trim());
-        input.value = '';
-      });
-      document.getElementById('addAccountForm')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const input = document.getElementById('newAccount');
-        addAccount(input.value.trim());
-        input.value = '';
-      });
-
-      document.querySelectorAll('.delete-cat-btn').forEach(button => {
-        button.addEventListener('click', (e) => {
-          const name = e.currentTarget.getAttribute('data-name');
-          const type = e.currentTarget.getAttribute('data-type');
-          showModal('Konfirmasi Hapus', `Yakin ingin menghapus item "${name}" dari ${type}?`, true, () => {
-            if (type === 'account') deleteAccount(name);
-            else deleteCategory(name);
-          });
-        });
-      });
+      // Simple budget page for now
+      console.log('Rendering budget page');
     }
 
     function formatPeriod(period) {
@@ -1410,27 +1494,94 @@
       const newYear = date.getFullYear();
       const newMonth = String(date.getMonth() + 1).padStart(2, '0');
       currentPeriod = `${newYear}-${newMonth}`;
+      
       if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-      else if (currentPage === 'budget') renderBudgetPage();
     }
 
-    // wire nav buttons
+    // Test functions
+    window.testAddCategory = async function() {
+      const results = document.getElementById('testResults');
+      if (results) {
+        results.classList.remove('hidden');
+        results.innerHTML = '<p class="text-blue-500">🔄 Menambah kategori test...</p>';
+      }
+      
+      try {
+        await addCategory('expense', 'Test Category ' + Date.now());
+        if (results) {
+          results.innerHTML = '<p class="text-green-500">✅ Kategori berhasil ditambah!</p>';
+        }
+      } catch (error) {
+        if (results) {
+          results.innerHTML = `<p class="text-red-500">❌ Gagal: ${error.message}</p>`;
+        }
+      }
+    };
+
+    window.testAddAccount = async function() {
+      const results = document.getElementById('testResults');
+      if (results) {
+        results.classList.remove('hidden');
+        results.innerHTML = '<p class="text-blue-500">🔄 Menambah akun test...</p>';
+      }
+      
+      try {
+        await addAccount('Test Account ' + Date.now());
+        if (results) {
+          results.innerHTML = '<p class="text-green-500">✅ Akun berhasil ditambah!</p>';
+        }
+      } catch (error) {
+        if (results) {
+          results.innerHTML = `<p class="text-red-500">❌ Gagal: ${error.message}</p>`;
+        }
+      }
+    };
+
+    // Reset function
+    async function resetAllTransactions() {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('profile_id', userId);
+        
+        if (error) throw error;
+        await fetchTransactions();
+        showModal('Sukses', 'Semua transaksi berhasil dihapus.');
+      } catch (err) {
+        console.error('❌ resetAllTransactions error:', err);
+        showModal('Gagal', `Gagal menghapus transaksi: ${err.message}`);
+      }
+    }
+
+    // Debug function
+    window.debugApp = function() {
+      console.log('=== DEBUG INFO ===');
+      console.log('User:', user);
+      console.log('User ID:', userId);
+      console.log('Is Auth Ready:', isAuthReady);
+      console.log('Current Page:', currentPage);
+      console.log('Current Period:', currentPeriod);
+      console.log('Transactions:', currentTransactions);
+      console.log('Categories:', currentCategories);
+      console.log('Accounts:', currentCategories.account);
+      console.log('Budgets:', currentBudgets);
+      
+      showModal(
+        'Debug Information', 
+        `User: ${user?.email}\nUser ID: ${userId}\nTransactions: ${currentTransactions.length}\nCategories: ${currentCategories.expense.length + currentCategories.incomeSource.length}\nAccounts: ${currentCategories.account.length}`,
+        false
+      );
+    };
+
+    // Navigation
     document.querySelectorAll('.nav-link').forEach(button => {
       button.addEventListener('click', (e) => {
         renderPage(e.target.getAttribute('data-page'));
       });
     });
 
-    // attach resize handler to redraw charts if functions available
-    window.addEventListener('resize', () => {
-      if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-    });
-
-    // initial UI: if not signed in, show auth UI
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('loadingOverlay').classList.add('hidden');
-      // If user signed in, initialSession check above will handle; else show auth
-    });
+    console.log('✅ Budgetin application initialized successfully');
 
   </script>
 </body>
