@@ -99,7 +99,6 @@
         border-radius: 0.5rem;
         font-weight: 600;
         text-align: center;
-        cursor: pointer;
     }
     .nav-link.active {
         background-color: var(--primary-accent);
@@ -114,14 +113,6 @@
     #authContainer {
       max-width: 520px;
       margin: 3rem auto;
-    }
-
-    /* modal tweaks */
-    #modal input[type="text"], #modal select {
-      width: 100%;
-      padding: 0.5rem;
-      border: 1px solid #e5e7eb;
-      border-radius: 0.375rem;
     }
   </style>
 </head>
@@ -229,10 +220,11 @@
     </div>
   </div>
 
+  <!-- SCRIPT: Supabase integration and app logic -->
   <script type="module">
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-    // Supabase credentials
+    // Supabase credentials (you provided these)
     const SUPABASE_URL = 'https://xzlggtyvgnyzzofgudwa.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6bGdndHl2Z255enpvZmd1ZHdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5MDk0MjcsImV4cCI6MjA3NzQ4NTQyN30.x77c3j7TfL5_tQStYNSurhEC6gUDIasuVUk8YpJAi5E';
 
@@ -258,6 +250,7 @@
     const chartText = getComputedStyle(document.documentElement).getPropertyValue('--chart-text') || getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
     const primaryAccent = getComputedStyle(document.documentElement).getPropertyValue('--primary-accent').trim();
 
+    // Utility: format currency (IDR)
     function formatRupiah(number) {
       if (number === null || number === undefined || isNaN(number)) return 'Rp -';
       return new Intl.NumberFormat('id-ID', {
@@ -342,8 +335,9 @@
         if (error) throw error;
         authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi.';
         try {
-          await supabase.auth.signInWithPassword({ email, password });
-        } catch (e) {}
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        } catch (e) {
+        }
       } catch (err) {
         authMessage.textContent = `Gagal registrasi: ${err.message || err}`;
       }
@@ -363,20 +357,11 @@
       }
     });
 
-    // Logout attachment function (safe to call after render)
-    function attachLogoutButton() {
-      const btn = document.getElementById('btnSignOut');
-      if (!btn) return;
-      btn.onclick = async () => {
-        try {
-          await supabase.auth.signOut();
-          window.location.reload();
-        } catch (err) {
-          console.error('Logout error', err);
-          showModal('Gagal', 'Terjadi kesalahan saat logout.');
-        }
-      };
-    }
+    // Sign out
+    document.getElementById('btnSignOut').addEventListener('click', async () => {
+      await supabase.auth.signOut();
+      window.location.reload();
+    });
 
     // Auth state listener
     supabase.auth.onAuthStateChange(async (event, session) => {
@@ -425,7 +410,6 @@
     function hideAuthUI() {
       document.getElementById('authWrapper').classList.add('hidden');
       document.getElementById('mainContent').classList.remove('hidden');
-      document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
     // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
@@ -437,10 +421,10 @@
       await fetchCategories();
       await fetchAccounts();
       await fetchBudgets();
-      await fetchTransactions(); // <-- load all transactions immediately after login
+      // Now fetch all transactions immediately (per your request)
+      await fetchTransactions();
       setupRealtime();
       renderPage('dashboard');
-      attachLogoutButton();
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
@@ -577,8 +561,6 @@
       try {
         const { error } = await supabase.from('categories').delete().eq('profile_id', userId).eq('name', name);
         if (error) throw error;
-        // also update transactions that had this category_name to null
-        await supabase.from('transactions').update({ category_name: null }).eq('profile_id', userId).eq('category_name', name);
         await fetchCategories();
         showModal('Sukses', `${name} berhasil dihapus.`);
       } catch (err) {
@@ -586,41 +568,6 @@
         showModal('Gagal', `Gagal hapus kategori: ${err.message || err}`);
       }
     }
-
-    // EDIT category: change name and/or type
-    async function editCategory(oldName) {
-      try {
-        // fetch current type to prefill
-        const { data: cat } = await supabase.from('categories').select('id,name,type').eq('profile_id', userId).eq('name', oldName).limit(1).maybeSingle();
-        if (!cat) return showModal('Gagal', 'Kategori tidak ditemukan.');
-        const currentType = cat.type || 'expense';
-        const newName = prompt('Edit nama kategori:', oldName);
-        if (newName === null) return; // user cancelled
-        const newNameTrim = newName.trim();
-        if (!newNameTrim) return showModal('Perhatian', 'Nama kategori tidak boleh kosong.');
-
-        let newType = prompt('Ubah tipe kategori (ketik "expense" untuk Pengeluaran atau "income" untuk Pemasukan):', currentType);
-        if (newType === null) return;
-        newType = newType.trim().toLowerCase();
-        if (newType !== 'expense' && newType !== 'income') {
-          return showModal('Perhatian', 'Tipe kategori harus "expense" atau "income".');
-        }
-
-        // perform update
-        const { error } = await supabase.from('categories').update({ name: newNameTrim, type: newType }).eq('profile_id', userId).eq('id', cat.id);
-        if (error) throw error;
-
-        // update transactions that used old category name (category_name column)
-        await supabase.from('transactions').update({ category_name: newNameTrim }).eq('profile_id', userId).eq('category_name', oldName);
-
-        await fetchCategories();
-        showModal('Sukses', `Kategori "${oldName}" diperbarui menjadi "${newNameTrim}" (${newType}).`);
-      } catch (err) {
-        console.error('editCategory error', err);
-        showModal('Gagal', `Gagal mengedit kategori: ${err.message || err}`);
-      }
-    }
-
     async function addAccount(name) {
       if (!name) return showModal('Perhatian', 'Nama akun tidak boleh kosong.');
       try {
@@ -637,8 +584,6 @@
       try {
         const { error } = await supabase.from('accounts').delete().eq('profile_id', userId).eq('name', name);
         if (error) throw error;
-        // update transactions account_name to null for consistency
-        await supabase.from('transactions').update({ account_name: null }).eq('profile_id', userId).eq('account_name', name);
         await fetchAccounts();
         showModal('Sukses', `${name} berhasil dihapus.`);
       } catch (err) {
@@ -723,7 +668,7 @@
       }
     }
 
-    // UI rendering
+    // UI rendering (templates reused from original HTML logic)
     function renderPage(pageName) {
       currentPage = pageName;
       const container = document.getElementById('pageContainer');
@@ -762,7 +707,7 @@
       }
     }
 
-    // Templates (same as earlier; omitted here for brevity in analysis—but included in full code)
+    // Templates (copied/kept from your original layout)
     function renderDashboardPageTemplate() {
       return `
         <div class="flex flex-col sm:flex-row items-center justify-between mb-6 space-y-3 sm:space-y-0 sm:space-x-3">
@@ -989,7 +934,7 @@
       `;
     }
 
-    // Transaction & UI helper functions (setupTransactionForm, renderTransactionsList, loadDashboard)
+    // UI functions: setupTransactionForm, renderTransactionsList, loadDashboard, charts, budgets, settings
     function setupTransactionForm() {
       const form = document.getElementById('transactionForm');
       if (!form) return;
@@ -1164,6 +1109,7 @@
       }
     }
 
+    // Budget & Settings simplified rendering
     function renderBudgetPage() {
       const totalExpense = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((s,tx) => s + (Number(tx.amount)||0),0);
       const expenseMap = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((map,tx) => {
@@ -1247,10 +1193,7 @@
         expenseList.innerHTML = currentCategories.expense.map(cat => `
             <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-red-100">
                 <span>${cat}</span>
-                <div class="flex items-center gap-2">
-                  <button data-name="${cat}" data-type="expense" class="edit-cat-btn text-blue-500 hover:text-blue-700 transition text-sm">Edit</button>
-                  <button data-name="${cat}" data-type="expense" class="delete-cat-btn text-red-500 hover:text-red-700 transition text-sm">Hapus</button>
-                </div>
+                <button data-name="${cat}" data-type="expense" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
             </div>
         `).join('');
       }
@@ -1259,10 +1202,7 @@
         incomeSourceList.innerHTML = currentCategories.incomeSource.map(cat => `
             <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-green-100">
                 <span>${cat}</span>
-                <div class="flex items-center gap-2">
-                  <button data-name="${cat}" data-type="income" class="edit-cat-btn text-blue-500 hover:text-blue-700 transition text-sm">Edit</button>
-                  <button data-name="${cat}" data-type="income" class="delete-cat-btn text-red-500 hover:text-red-700 transition text-sm">Hapus</button>
-                </div>
+                <button data-name="${cat}" data-type="income" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
             </div>
         `).join('');
       }
@@ -1271,9 +1211,7 @@
         accountList.innerHTML = currentCategories.account.map(cat => `
             <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-blue-100">
                 <span>${cat}</span>
-                <div class="flex items-center gap-2">
-                  <button data-name="${cat}" data-type="account" class="delete-acc-btn text-red-500 hover:text-red-700 transition text-sm">Hapus</button>
-                </div>
+                <button data-name="${cat}" data-type="account" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
             </div>
         `).join('');
       }
@@ -1297,23 +1235,14 @@
         input.value = '';
       });
 
-      // attach edit & delete handlers
-      document.querySelectorAll('.edit-cat-btn').forEach(button => {
-        button.addEventListener('click', (e) => {
-          const name = e.currentTarget.getAttribute('data-name');
-          editCategory(name);
-        });
-      });
       document.querySelectorAll('.delete-cat-btn').forEach(button => {
         button.addEventListener('click', (e) => {
           const name = e.currentTarget.getAttribute('data-name');
-          showModal('Konfirmasi Hapus', `Yakin ingin menghapus kategori "${name}"?`, true, () => deleteCategory(name));
-        });
-      });
-      document.querySelectorAll('.delete-acc-btn').forEach(button => {
-        button.addEventListener('click', (e) => {
-          const name = e.currentTarget.getAttribute('data-name');
-          showModal('Konfirmasi Hapus', `Yakin ingin menghapus akun "${name}"?`, true, () => deleteAccount(name));
+          const type = e.currentTarget.getAttribute('data-type');
+          showModal('Konfirmasi Hapus', `Yakin ingin menghapus item "${name}" dari ${type}?`, true, () => {
+            if (type === 'account') deleteAccount(name);
+            else deleteCategory(name);
+          });
         });
       });
     }
@@ -1348,12 +1277,88 @@
       if (currentPage === 'dashboard') loadDashboard(currentPeriod);
     });
 
-    // initial UI
+    // initial UI: if not signed in, show auth UI
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('loadingOverlay').classList.add('hidden');
+      // If user signed in, initialSession check above will handle; else show auth
     });
 
   </script>
+
+  <!--
+    IMPORTANT SQL NOTES (run these in Supabase SQL editor before using the app):
+    1) Basic schema (run once):
+
+    -- enable extension for gen_random_uuid if not enabled
+    create extension if not exists "pgcrypto";
+
+    create table if not exists profiles (
+      id uuid primary key,
+      email text,
+      full_name text,
+      created_at timestamptz default now()
+    );
+
+    create table if not exists accounts (
+      id uuid primary key default gen_random_uuid(),
+      profile_id uuid references profiles(id) on delete cascade,
+      name text not null,
+      currency text default 'IDR',
+      balance numeric default 0,
+      created_at timestamptz default now()
+    );
+
+    create table if not exists categories (
+      id uuid primary key default gen_random_uuid(),
+      profile_id uuid references profiles(id) on delete cascade,
+      name text not null,
+      type text check (type in ('income','expense')),
+      created_at timestamptz default now()
+    );
+
+    create table if not exists transactions (
+      id uuid primary key default gen_random_uuid(),
+      profile_id uuid references profiles(id) on delete cascade,
+      account_id uuid references accounts(id),
+      category_id uuid references categories(id),
+      account_name text,
+      category_name text,
+      type text check (type in ('Pemasukan','Pengeluaran')) not null,
+      amount numeric not null,
+      date date not null,
+      period text,
+      description text,
+      created_at timestamptz default now()
+    );
+
+    -- trigger to fill period (YYYY-MM)
+    create or replace function set_period_from_date()
+    returns trigger as $$
+    begin
+      new.period := to_char(new.date, 'YYYY-MM');
+      return new;
+    end;
+    $$ language plpgsql;
+
+    drop trigger if exists trg_set_period_from_date on transactions;
+    create trigger trg_set_period_from_date
+      before insert or update on transactions
+      for each row
+      execute function set_period_from_date();
+
+    create table if not exists budgets (
+      id uuid primary key default gen_random_uuid(),
+      profile_id uuid references profiles(id) on delete cascade,
+      category_id uuid references categories(id),
+      period text not null,
+      amount_limit numeric not null,
+      created_at timestamptz default now(),
+      unique (profile_id, category_id, period)
+    );
+
+    -- (optional) enable row level security and policies recommended for production
+
+  -->
 
 </body>
 </html>
