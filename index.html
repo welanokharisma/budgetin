@@ -338,11 +338,12 @@
       if (!name) { authMessage.textContent = 'Nama harus diisi.'; return; }
       authMessage.textContent = 'Mendaftar...';
       try {
-        // Coba registrasi dan tambahkan full_name ke user metadata
         const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
         if (error) throw error;
         authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi.';
-        // Secara implisit Supabase akan memicu event SIGNED_IN
+        try {
+          await supabase.auth.signInWithPassword({ email, password });
+        } catch (e) {}
       } catch (err) {
         authMessage.textContent = `Gagal registrasi: ${err.message || err}`;
       }
@@ -377,93 +378,43 @@
       };
     }
 
-    // ====================================================================
-    // PERBAIKAN: FUNGSI UNTUK MENAMBAH DATA DEFAULT (KATEGORI DAN AKUN)
-    // ====================================================================
-    const addDefaultData = async (userId) => {
-        // 1. Cek & Tambah Kategori Default
-        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
-        if (catData && catData.length > 0) {
-          console.log("Data default (kategori) sudah ada.");
-        } else {
-          console.log("Menambahkan kategori default...");
-          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
-          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
-          const toInsert = [
-              ...defaultExpense.map(name => ({ profile_id: userId, name, type: 'expense' })),
-              ...defaultIncome.map(name => ({ profile_id: userId, name, type: 'income' }))
-          ];
-          const { error: catError } = await supabase.from('categories').insert(toInsert);
-          if (catError) {
-              console.error("Gagal menambahkan kategori default:", catError.message);
-          }
-        }
-
-        // 2. Cek & Tambah Akun Default
-        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
-        if (accData && accData.length > 0) {
-          console.log("Data default (akun) sudah ada.");
-        } else {
-          console.log("Menambahkan akun default...");
-          const defaultAccounts = ['Kas Utama', 'Bank Utama', 'E-Wallet'];
-          const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
-          const { error: accError } = await supabase.from('accounts').insert(toInsertAcc);
-          if (accError) {
-              console.error("Gagal menambahkan akun default:", accError.message);
-          }
-        }
-    };
-
-
-    // ====================================================================
-    // PERBAIKAN: FUNGSI UNTUK MENANGANI PENGGUNA BARU DAN LOGIN
-    // * Ini menggabungkan logika ensureProfileExists dan seedDefaults
-    // ====================================================================
-    const handleNewUser = async (session) => {
-        const userId = session.user.id;
-        const email = session.user.email;
-        
-        // 1. Cek apakah profil sudah ada
-        const { data: profileData } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', userId)
-            .maybeSingle(); 
-
-        if (!profileData) {
-            console.log("Pengguna baru terdeteksi. Membuat profil...");
-            
-            // 2. Ambil nama dari metadata
-            const nameFromMetadata = session.user?.user_metadata?.full_name || session.user?.user_metadata?.name || null;
-
-            // 3. Buat Profil Baru (id = auth.uid())
-            const { error: profileError } = await supabase
-                .from('profiles')
-                .insert({ 
-                    id: userId, 
-                    email: email, 
-                    full_name: nameFromMetadata
-                });
-
-            if (profileError) {
-                // Jika gagal membuat profil, batalkan pendaftaran dan hentikan proses
-                console.error('FATAL: Gagal membuat profil:', profileError.message);
-                await supabase.auth.signOut(); 
-                alert('Pendaftaran gagal total. Silakan coba lagi.');
-                return;
-            }
-        } 
-
-        // 4. Tambahkan data default (kategori/akun) - fungsi ini juga melakukan pengecekan data
-        await addDefaultData(userId);
-        
-        // 5. Setelah profil dan data default terjamin ada, inisialisasi aplikasi
-        user = session.user;
-        isAuthReady = true;
+    // Auth state listener
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        user = null;
+        userId = null;
+        isAuthReady = false;
+        showAuthUI();
+      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+        user = session?.user ?? null;
+        userId = user?.id ?? null;
+        isAuthReady = !!userId;
         hideAuthUI();
         await postSignInInit();
-    };
+      }
+    });
 
+    // Initial session check
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const session = data?.session ?? null;
+        if (session && session.user) {
+          user = session.user;
+          userId = user.id;
+          isAuthReady = true;
+          hideAuthUI();
+          await postSignInInit();
+        } else {
+          showAuthUI();
+        }
+      } catch (err) {
+        console.error('Error checking session', err);
+        showAuthUI();
+      } finally {
+        document.getElementById('loadingOverlay').classList.add('hidden');
+      }
+    })();
 
     function showAuthUI() {
       document.getElementById('mainContent').classList.add('hidden');
@@ -477,11 +428,12 @@
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
-    // After sign-in init: load categories/accounts, load all transactions & budgets
+    // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
     async function postSignInInit() {
       if (!isAuthReady || !userId) return;
       document.getElementById('userIdDisplay').textContent = `User ID: ${userId.substring(0,8)}...`;
-      // ensureProfileExists() dan seedDefaults() sudah tidak perlu dipanggil di sini, karena sudah dipanggil di handleNewUser
+      await ensureProfileExists();
+      await seedDefaults();
       await fetchCategories();
       await fetchAccounts();
       await fetchBudgets();
@@ -492,44 +444,53 @@
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
-    // ====================================================================
-    // PERBAIKAN: AUTH STATE LISTENER (Mengarahkan ke handleNewUser)
-    // ====================================================================
-    supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') {
-        user = null;
-        userId = null;
-        isAuthReady = false;
-        showAuthUI();
-      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
-        if (session && session.user) {
-          userId = session.user.id; 
-          await handleNewUser(session);
-        }
-      }
-    });
-
-    // ====================================================================
-    // PERBAIKAN: Initial session check (Mengarahkan ke handleNewUser)
-    // ====================================================================
-    (async () => {
+    async function ensureProfileExists() {
       try {
-        const { data } = await supabase.auth.getSession();
-        const session = data?.session ?? null;
-        if (session && session.user) {
-          userId = session.user.id; 
-          await handleNewUser(session);
-        } else {
-          showAuthUI();
+        const { data: existing, error: selErr } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .limit(1)
+          .maybeSingle();
+        if (selErr) throw selErr;
+        if (!existing) {
+          const nameFromMetadata = user?.user_metadata?.full_name || user?.user_metadata?.name || (document.getElementById('regName')?.value || null);
+          const fullName = nameFromMetadata || null;
+          const { error: insErr } = await supabase
+            .from('profiles')
+            .insert([{ id: userId, email: user.email, full_name: fullName }], { returning: 'minimal' });
+          if (insErr) console.warn('profile insert warning', insErr);
         }
       } catch (err) {
-        console.error('Error checking session', err);
-        showAuthUI();
-      } finally {
-        // Overlay dihilangkan setelah pengecekan awal selesai
-        document.getElementById('loadingOverlay').classList.add('hidden');
+        console.error('ensureProfileExists error', err);
       }
-    })();
+    }
+
+    async function seedDefaults() {
+      try {
+        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
+        if (!catData || catData.length === 0) {
+          const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
+          const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
+          const toInsert = [
+            ...defaultExpense.map(name => ({ profile_id: userId, name, type: 'expense' })),
+            ...defaultIncome.map(name => ({ profile_id: userId, name, type: 'income' }))
+          ];
+          const { error: insertErr } = await supabase.from('categories').insert(toInsert);
+          if (insertErr) console.warn('seed categories error', insertErr);
+        }
+
+        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
+        if (!accData || accData.length === 0) {
+          const defaultAccounts = ['Kas', 'Bank Utama', 'E-Wallet'];
+          const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
+          const { error: insErr } = await supabase.from('accounts').insert(toInsertAcc);
+          if (insErr) console.warn('seed accounts error', insErr);
+        }
+      } catch (err) {
+        console.error('seedDefaults error', err);
+      }
+    }
 
     // Fetch helpers
     async function fetchCategories() {
@@ -1391,6 +1352,8 @@
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('loadingOverlay').classList.add('hidden');
     });
+
+  </script>
 
 </body>
 </html>
