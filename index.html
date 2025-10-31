@@ -220,18 +220,17 @@
     </div>
   </div>
 
-  <!-- Supabase & App Script -->
+  <!-- SCRIPT: Supabase integration and app logic -->
   <script type="module">
-    // ---------- Supabase Config (sesuaikan bila perlu) ----------
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+    // Supabase credentials (you provided these)
     const SUPABASE_URL = 'https://xzlggtyvgnyzzofgudwa.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh6bGdndHl2Z255enpvZmd1ZHdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5MDk0MjcsImV4cCI6MjA3NzQ4NTQyN30.x77c3j7TfL5_tQStYNSurhEC6gUDIasuVUk8YpJAi5E';
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: true }
-    });
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true } });
 
-    // ---------- App state ----------
+    // App state
     let user = null;
     let userId = null;
     let isAuthReady = false;
@@ -243,16 +242,16 @@
     let currentPage = 'dashboard';
     let currentPeriod = new Date().toISOString().substring(0,7); // YYYY-MM
 
-    // Colors from CSS variables
+    // Colors from CSS
     const expenseColor = getComputedStyle(document.documentElement).getPropertyValue('--color-red-expense').trim();
     const incomeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-green-primary').trim();
     const balanceColor = getComputedStyle(document.documentElement).getPropertyValue('--color-balance-blue').trim();
     const chartBg = getComputedStyle(document.documentElement).getPropertyValue('--chart-bg').trim();
-    const chartText = getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
+    const chartText = getComputedStyle(document.documentElement).getPropertyValue('--chart-text') || getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
     const primaryAccent = getComputedStyle(document.documentElement).getPropertyValue('--primary-accent').trim();
 
     // Utility: format currency (IDR)
-    const formatRupiah = (number) => {
+    function formatRupiah(number) {
       if (number === null || number === undefined || isNaN(number)) return 'Rp -';
       return new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -260,11 +259,15 @@
         minimumFractionDigits: 0,
         maximumFractionDigits: 0
       }).format(number);
-    };
+    }
 
-    // Modal utilities
+    // Modal helpers
     function showModal(title, message, isConfirm = false, onConfirm = () => {}) {
       const modal = document.getElementById('modal');
+      if (!modal) {
+        alert(title + '\n\n' + message);
+        return;
+      }
       document.getElementById('modalTitle').textContent = title;
       document.getElementById('modalMessage').textContent = message;
       const confirmBtn = document.getElementById('modalConfirmBtn');
@@ -281,13 +284,14 @@
     }
     function closeModal() {
       const modal = document.getElementById('modal');
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+      }
     }
 
-    // ----------------- Auth UI handlers -----------------
+    // Auth UI bindings
     const authWrapper = document.getElementById('authWrapper');
-    const authContainer = document.getElementById('authContainer');
     const authMessage = document.getElementById('authMessage');
 
     document.getElementById('btnShowLogin').addEventListener('click', () => {
@@ -312,16 +316,13 @@
       try {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        if (data && data.user) {
-          authMessage.textContent = 'Berhasil masuk. Memuat data...';
-          // onAuthStateChange will handle session
-        }
+        authMessage.textContent = 'Berhasil masuk. Memuat data...';
       } catch (err) {
-        authMessage.textContent = `Gagal masuk: ${err.message}`;
+        authMessage.textContent = `Gagal masuk: ${err.message || err}`;
       }
     });
 
-    // Register (sign up)
+    // Register
     document.getElementById('registerForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = document.getElementById('regName').value.trim();
@@ -330,21 +331,15 @@
       if (!name) { authMessage.textContent = 'Nama harus diisi.'; return; }
       authMessage.textContent = 'Mendaftar...';
       try {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
         if (error) throw error;
-        // If your Supabase requires email confirmation, user must confirm via email.
-        // We'll attempt to sign in automatically to create profile when possible.
-        authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi. Memuat sesi...';
-        // Try to sign in immediately (if confirm not required) to create profile
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInError && signInError.message) {
-          // still show message — account may need email confirmation
-          authMessage.textContent = 'Akun terdaftar. Silakan cek email untuk verifikasi jika diminta.';
-          return;
+        authMessage.textContent = 'Registrasi berhasil. Jika perlu, cek email untuk mengonfirmasi.';
+        try {
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        } catch (e) {
         }
-        // if successfully signed in, onAuthStateChange will handle initialization
       } catch (err) {
-        authMessage.textContent = `Gagal registrasi: ${err.message}`;
+        authMessage.textContent = `Gagal registrasi: ${err.message || err}`;
       }
     });
 
@@ -358,7 +353,7 @@
         if (error) throw error;
         showModal('Sukses', 'Email reset password telah dikirim (cek inbox/spam).');
       } catch (err) {
-        showModal('Gagal', `Gagal mengirim email reset: ${err.message}`);
+        showModal('Gagal', `Gagal mengirim email reset: ${err.message || err}`);
       }
     });
 
@@ -368,9 +363,8 @@
       window.location.reload();
     });
 
-    // ----------------- Auth State Listener -----------------
-    supabase.auth.onAuthStateChange((event, session) => {
-      // event examples: 'SIGNED_IN', 'SIGNED_OUT', 'PASSWORD_RECOVERY', etc.
+    // Auth state listener
+    supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
         user = null;
         userId = null;
@@ -379,13 +373,13 @@
       } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
         user = session?.user ?? null;
         userId = user?.id ?? null;
-        isAuthReady = true;
+        isAuthReady = !!userId;
         hideAuthUI();
-        initAfterAuth(); // load data
+        await postSignInInit();
       }
     });
 
-    // Initial check for session
+    // Initial session check
     (async () => {
       try {
         const { data } = await supabase.auth.getSession();
@@ -395,9 +389,8 @@
           userId = user.id;
           isAuthReady = true;
           hideAuthUI();
-          initAfterAuth();
+          await postSignInInit();
         } else {
-          // show auth UI
           showAuthUI();
         }
       } catch (err) {
@@ -419,65 +412,47 @@
       document.getElementById('mainContent').classList.remove('hidden');
     }
 
-    // ----------------- After Auth Initialization -----------------
-    async function initAfterAuth() {
+    // After sign-in init: ensure profile exists, seed defaults, load categories/accounts, load all transactions & budgets
+    async function postSignInInit() {
       if (!isAuthReady || !userId) return;
       document.getElementById('userIdDisplay').textContent = `User ID: ${userId.substring(0,8)}...`;
-      // Ensure profile exists (profiles.id must equal auth.uid() for RLS policy)
       await ensureProfileExists();
-
-      // Load initial data
-      await fetchAllUserData();
-
-      // Setup realtime listeners
-      setupRealtimeSubscriptions();
-
-      // Render default page
+      await seedDefaults();
+      await fetchCategories();
+      await fetchAccounts();
+      await fetchBudgets();
+      // Now fetch all transactions immediately (per your request)
+      await fetchTransactions();
+      setupRealtime();
       renderPage('dashboard');
-
-      // hide loading overlay
       document.getElementById('loadingOverlay').classList.add('hidden');
     }
 
-    // Create profile row (id = auth.uid()) and optionally seed default categories/accounts
     async function ensureProfileExists() {
       try {
         const { data: existing, error: selErr } = await supabase
           .from('profiles')
-          .select('id, full_name')
+          .select('id')
           .eq('id', userId)
           .limit(1)
           .maybeSingle();
-
         if (selErr) throw selErr;
-
         if (!existing) {
-          // insert profile with id == auth.uid()
-          const name = user.user_metadata?.full_name || user.user_metadata?.name || (document.getElementById('regName')?.value || null);
+          const nameFromMetadata = user?.user_metadata?.full_name || user?.user_metadata?.name || (document.getElementById('regName')?.value || null);
+          const fullName = nameFromMetadata || null;
           const { error: insErr } = await supabase
             .from('profiles')
-            .insert([{ id: userId, email: user.email, full_name: name }], { returning: 'minimal' });
+            .insert([{ id: userId, email: user.email, full_name: fullName }], { returning: 'minimal' });
           if (insErr) console.warn('profile insert warning', insErr);
-          // seed default categories & accounts after creating profile
-          await seedDefaults();
         }
       } catch (err) {
         console.error('ensureProfileExists error', err);
       }
     }
 
-    // Seed default categories & accounts (only if none exist)
     async function seedDefaults() {
       try {
-        // check categories
-        const { data: catData, error: catErr } = await supabase
-          .from('categories')
-          .select('id')
-          .eq('profile_id', userId)
-          .limit(1);
-
-        if (catErr) throw catErr;
-
+        const { data: catData } = await supabase.from('categories').select('id').eq('profile_id', userId).limit(1);
         if (!catData || catData.length === 0) {
           const defaultExpense = ['Makanan & Minuman', 'Transportasi', 'Tagihan', 'Hiburan'];
           const defaultIncome = ['Gaji', 'Bisnis Sampingan', 'Investasi'];
@@ -489,193 +464,163 @@
           if (insertErr) console.warn('seed categories error', insertErr);
         }
 
-        // check accounts
-        const { data: accData, error: accErr } = await supabase
-          .from('accounts')
-          .select('id')
-          .eq('profile_id', userId)
-          .limit(1);
-
-        if (accErr) throw accErr;
-
+        const { data: accData } = await supabase.from('accounts').select('id').eq('profile_id', userId).limit(1);
         if (!accData || accData.length === 0) {
           const defaultAccounts = ['Kas', 'Bank Utama', 'E-Wallet'];
           const toInsertAcc = defaultAccounts.map(name => ({ profile_id: userId, name }));
-          const { error: insAccErr } = await supabase.from('accounts').insert(toInsertAcc);
-          if (insAccErr) console.warn('seed accounts error', insAccErr);
+          const { error: insErr } = await supabase.from('accounts').insert(toInsertAcc);
+          if (insErr) console.warn('seed accounts error', insErr);
         }
       } catch (err) {
         console.error('seedDefaults error', err);
       }
     }
 
-    // Fetch all user data once
-    async function fetchAllUserData() {
-      if (!userId) return;
-      try {
-        // categories
-        const { data: cats } = await supabase.from('categories').select('*').eq('profile_id', userId).order('created_at', {ascending:true});
-        currentCategories.expense = (cats || []).filter(c => c.type === 'expense').map(c => c.name);
-        currentCategories.incomeSource = (cats || []).filter(c => c.type === 'income').map(c => c.name);
-
-        // accounts
-        const { data: accs } = await supabase.from('accounts').select('*').eq('profile_id', userId).order('created_at', {ascending:true});
-        currentCategories.account = (accs || []).map(a => a.name);
-
-        // transactions
-        const { data: txs } = await supabase.from('transactions').select('*').eq('profile_id', userId).order('date', {ascending: false});
-        currentTransactions = txs || [];
-
-        // budgets
-        const { data: buds } = await supabase.from('budgets').select('*').eq('profile_id', userId);
-        currentBudgets = buds || [];
-
-        // render current page
-        if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-        if (currentPage === 'transaksi') renderTransactionsList();
-        if (currentPage === 'budget') renderBudgetPage();
-        if (currentPage === 'pengaturan') renderSettingsPage();
-      } catch (err) {
-        console.error('fetchAllUserData error', err);
-      }
-    }
-
-    // Setup realtime subscriptions for transactions, budgets, categories, accounts
-    let realtimeChannel = null;
-    function setupRealtimeSubscriptions() {
-      if (realtimeChannel) {
-        try { supabase.removeChannel(realtimeChannel); } catch(e){/*ignore*/ }
-      }
-      realtimeChannel = supabase.channel('public:budgetin:' + userId);
-
-      // transactions changes
-      realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `profile_id=eq.${userId}` }, payload => {
-        // Re-fetch transactions for simplicity (keeps logic simple & robust)
-        fetchTransactions();
-      });
-
-      // categories changes
-      realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'categories', filter: `profile_id=eq.${userId}` }, payload => {
-        fetchCategories();
-      });
-
-      // accounts changes
-      realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'accounts', filter: `profile_id=eq.${userId}` }, payload => {
-        fetchAccounts();
-      });
-
-      // budgets changes
-      realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'budgets', filter: `profile_id=eq.${userId}` }, payload => {
-        fetchBudgets();
-      });
-
-      supabase.addChannel(realtimeChannel).subscribe(status => {
-        // console.log('realtime status', status);
-      });
-    }
-
-    // Helper fetch functions (targeted)
-    async function fetchTransactions() {
-      const { data } = await supabase.from('transactions').select('*').eq('profile_id', userId).order('date', {ascending:false});
-      currentTransactions = data || [];
-      if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-      if (currentPage === 'transaksi') renderTransactionsList();
-    }
+    // Fetch helpers
     async function fetchCategories() {
-      const { data } = await supabase.from('categories').select('*').eq('profile_id', userId).order('created_at', {ascending:true});
-      currentCategories.expense = (data || []).filter(c => c.type === 'expense').map(c => c.name);
-      currentCategories.incomeSource = (data || []).filter(c => c.type === 'income').map(c => c.name);
-      if (currentPage === 'transaksi') renderTransactionPage(); 
-      if (currentPage === 'pengaturan') renderSettingsPage();
+      try {
+        const { data } = await supabase.from('categories').select('*').eq('profile_id', userId).order('created_at', { ascending: true });
+        const rows = data || [];
+        currentCategories.expense = rows.filter(r => r.type === 'expense').map(r => r.name);
+        currentCategories.incomeSource = rows.filter(r => r.type === 'income').map(r => r.name);
+        if (currentPage === 'transaksi') {
+          renderPage('transaksi');
+        } else if (currentPage === 'pengaturan') {
+          renderPage('pengaturan');
+        }
+      } catch (err) {
+        console.error('fetchCategories', err);
+      }
     }
     async function fetchAccounts() {
-      const { data } = await supabase.from('accounts').select('*').eq('profile_id', userId).order('created_at', {ascending:true});
-      currentCategories.account = (data || []).map(a => a.name);
-      if (currentPage === 'transaksi') renderTransactionPage();
-      if (currentPage === 'pengaturan') renderSettingsPage();
+      try {
+        const { data } = await supabase.from('accounts').select('*').eq('profile_id', userId).order('created_at', { ascending: true });
+        const rows = data || [];
+        currentCategories.account = rows.map(r => r.name);
+        if (currentPage === 'transaksi') {
+          renderPage('transaksi');
+        } else if (currentPage === 'pengaturan') {
+          renderPage('pengaturan');
+        }
+      } catch (err) {
+        console.error('fetchAccounts', err);
+      }
     }
     async function fetchBudgets() {
-      const { data } = await supabase.from('budgets').select('*').eq('profile_id', userId);
-      currentBudgets = data || [];
-      if (currentPage === 'dashboard') loadDashboard(currentPeriod);
-      if (currentPage === 'budget') renderBudgetPage();
+      try {
+        const { data } = await supabase.from('budgets').select('*').eq('profile_id', userId);
+        currentBudgets = data || [];
+      } catch (err) {
+        console.error('fetchBudgets', err);
+      }
+    }
+    async function fetchTransactions() {
+      try {
+        const { data } = await supabase.from('transactions').select('*').eq('profile_id', userId).order('date', { ascending: false });
+        currentTransactions = data || [];
+        if (currentPage === 'dashboard') loadDashboard(currentPeriod);
+        if (currentPage === 'transaksi') renderTransactionsList();
+      } catch (err) {
+        console.error('fetchTransactions', err);
+      }
     }
 
-    // ----------------- CRUD: Transactions -----------------
-    async function saveTransaction(type, amount, dateStr, category, account, description) {
-      if (!isAuthReady || !userId) return;
-      const date = dateStr;
+    // Realtime subscriptions
+    let realtimeChannel = null;
+    function setupRealtime() {
       try {
-        const { error } = await supabase.from('transactions').insert([{
-          profile_id: userId,
-          account_id: null, // keeping simple: account name stored in 'account' field below
-          category_id: null,
-          type: type,
-          amount: parseFloat(amount),
-          date: date,
-          period: date.substring(0,7),
-          description: description || '',
-          -- // NOTE: PostgreSQL doesn't accept inline comments here; this line will be removed by parser
-        }]);
+        if (realtimeChannel) {
+          supabase.removeChannel(realtimeChannel);
+          realtimeChannel = null;
+        }
+        realtimeChannel = supabase.channel('realtime-' + userId);
+        realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `profile_id=eq.${userId}` }, () => fetchTransactions());
+        realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'categories', filter: `profile_id=eq.${userId}` }, () => fetchCategories());
+        realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'accounts', filter: `profile_id=eq.${userId}` }, () => fetchAccounts());
+        realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'budgets', filter: `profile_id=eq.${userId}` }, () => fetchBudgets());
+        supabase.addChannel(realtimeChannel).subscribe();
       } catch (err) {
-        // fallback: older supabase clients or unexpected error
+        console.warn('setupRealtime warn', err);
       }
+    }
 
-      // Simpler: store structured transaction with account/category as text columns
+    // CRUD: categories/accounts
+    async function addCategory(type, name) {
+      if (!name) return showModal('Perhatian', 'Nama kategori tidak boleh kosong.');
       try {
-        // We'll create a flexible transactions table that accepts account/category text if category_id/account_id unavailable.
-        const { error } = await supabase.from('transactions').insert([{
-          profile_id: userId,
-          type: type,
-          amount: parseFloat(amount),
-          date: date,
-          period: date.substring(0,7),
-          description: description || '',
-          -- // (this comment is intentionally left to be ignored)
-        }]);
+        const { error } = await supabase.from('categories').insert([{ profile_id: userId, name, type }]);
         if (error) throw error;
-        // After insert, refresh
-        await fetchTransactions();
-        showModal('Sukses', `${type} baru berhasil ditambahkan!`);
-        // reset form
-        document.getElementById('transactionForm')?.reset();
+        await fetchCategories();
+        showModal('Sukses', `${name} berhasil ditambahkan ke ${type}.`);
       } catch (err) {
-        console.error('saveTransaction error', err);
-        showModal('Gagal', `Gagal menambahkan ${type}: ${err.message || err}`);
+        console.error('addCategory', err);
+        showModal('Gagal', `Gagal menambah kategori: ${err.message || err}`);
+      }
+    }
+    async function deleteCategory(name) {
+      try {
+        const { error } = await supabase.from('categories').delete().eq('profile_id', userId).eq('name', name);
+        if (error) throw error;
+        await fetchCategories();
+        showModal('Sukses', `${name} berhasil dihapus.`);
+      } catch (err) {
+        console.error('deleteCategory', err);
+        showModal('Gagal', `Gagal hapus kategori: ${err.message || err}`);
+      }
+    }
+    async function addAccount(name) {
+      if (!name) return showModal('Perhatian', 'Nama akun tidak boleh kosong.');
+      try {
+        const { error } = await supabase.from('accounts').insert([{ profile_id: userId, name }]);
+        if (error) throw error;
+        await fetchAccounts();
+        showModal('Sukses', `${name} berhasil ditambahkan.`);
+      } catch (err) {
+        console.error('addAccount', err);
+        showModal('Gagal', `Gagal menambah akun: ${err.message || err}`);
+      }
+    }
+    async function deleteAccount(name) {
+      try {
+        const { error } = await supabase.from('accounts').delete().eq('profile_id', userId).eq('name', name);
+        if (error) throw error;
+        await fetchAccounts();
+        showModal('Sukses', `${name} berhasil dihapus.`);
+      } catch (err) {
+        console.error('deleteAccount', err);
+        showModal('Gagal', `Gagal hapus akun: ${err.message || err}`);
       }
     }
 
-    // For compatibility with your UI (which uses category/account text), we'll store category/account in description or add separate columns.
-    // However to keep DB structure consistent with SQL earlier, ideally transactions table has category_id and account_id.
-    // We'll implement helper to insert with category/account names by resolving ids.
-
+    // CRUD: transactions (resolve names -> ids + store names)
     async function saveTransactionResolved(type, amount, dateStr, categoryName, accountName, description) {
       if (!isAuthReady || !userId) return;
       try {
-        // Resolve category id
         let category_id = null;
         if (categoryName) {
-          const { data: cat, error: catErr } = await supabase.from('categories').select('id').eq('profile_id', userId).eq('name', categoryName).limit(1).maybeSingle();
+          const { data: cat } = await supabase.from('categories').select('id').eq('profile_id', userId).eq('name', categoryName).limit(1).maybeSingle();
           if (cat && cat.id) category_id = cat.id;
         }
-        // Resolve account id
         let account_id = null;
         if (accountName) {
-          const { data: acc, error: accErr } = await supabase.from('accounts').select('id').eq('profile_id', userId).eq('name', accountName).limit(1).maybeSingle();
+          const { data: acc } = await supabase.from('accounts').select('id').eq('profile_id', userId).eq('name', accountName).limit(1).maybeSingle();
           if (acc && acc.id) account_id = acc.id;
         }
 
-        const { error } = await supabase.from('transactions').insert([{
+        const payload = {
           profile_id: userId,
           account_id,
           category_id,
+          account_name: accountName || null,
+          category_name: categoryName || null,
           type,
           amount: parseFloat(amount),
           date: dateStr,
           period: dateStr.substring(0,7),
           description: description || ''
-        }]);
+        };
 
+        const { error } = await supabase.from('transactions').insert([payload]);
         if (error) throw error;
         await fetchTransactions();
         showModal('Sukses', `${type} baru berhasil ditambahkan!`);
@@ -699,71 +644,19 @@
       }
     }
 
-    // ----------------- CRUD: Categories & Accounts -----------------
-    async function addCategory(type, name) {
-      if (!name) return showModal('Perhatian', 'Nama kategori tidak boleh kosong.');
-      try {
-        const { error } = await supabase.from('categories').insert([{ profile_id: userId, name, type }]);
-        if (error) throw error;
-        await fetchCategories();
-        showModal('Sukses', `${name} berhasil ditambahkan ke ${type}.`);
-      } catch (err) {
-        console.error('addCategory error', err);
-        showModal('Gagal', `Gagal menambah kategori: ${err.message || err}`);
-      }
-    }
-    async function deleteCategory(name) {
-      try {
-        const { error } = await supabase.from('categories').delete().eq('profile_id', userId).eq('name', name);
-        if (error) throw error;
-        await fetchCategories();
-        showModal('Sukses', `${name} berhasil dihapus.`);
-      } catch (err) {
-        console.error('deleteCategory error', err);
-        showModal('Gagal', `Gagal hapus kategori: ${err.message || err}`);
-      }
-    }
-    async function addAccount(name) {
-      if (!name) return showModal('Perhatian', 'Nama akun tidak boleh kosong.');
-      try {
-        const { error } = await supabase.from('accounts').insert([{ profile_id: userId, name }]);
-        if (error) throw error;
-        await fetchAccounts();
-        showModal('Sukses', `${name} berhasil ditambahkan.`);
-      } catch (err) {
-        console.error('addAccount error', err);
-        showModal('Gagal', `Gagal menambah akun: ${err.message || err}`);
-      }
-    }
-    async function deleteAccount(name) {
-      try {
-        const { error } = await supabase.from('accounts').delete().eq('profile_id', userId).eq('name', name);
-        if (error) throw error;
-        await fetchAccounts();
-        showModal('Sukses', `${name} berhasil dihapus.`);
-      } catch (err) {
-        console.error('deleteAccount error', err);
-        showModal('Gagal', `Gagal hapus akun: ${err.message || err}`);
-      }
-    }
-
-    // ----------------- CRUD: Budgets -----------------
+    // Budget upsert
     async function saveBudgetForPeriod(period, budgetsObj) {
       try {
-        // Upsert each budget per category
         for (const categoryName of Object.keys(budgetsObj)) {
           const amount = budgetsObj[categoryName];
-          // find category id
           const { data: cat } = await supabase.from('categories').select('id').eq('profile_id', userId).eq('name', categoryName).limit(1).maybeSingle();
           const category_id = cat?.id ?? null;
-          // upsert by unique(profile_id, category_id, period)
           const payload = {
             profile_id: userId,
             category_id,
             period,
             amount_limit: amount
           };
-          // Use upsert by constraint - supabase expects unique constraint - our SQL created unique(profile_id, category_id, period)
           const { error } = await supabase.from('budgets').upsert(payload, { onConflict: ['profile_id','category_id','period'] });
           if (error) throw error;
         }
@@ -775,133 +668,107 @@
       }
     }
 
-    // ----------------- UI Rendering (adapted from original) -----------------
+    // UI rendering (templates reused from original HTML logic)
     function renderPage(pageName) {
       currentPage = pageName;
       const container = document.getElementById('pageContainer');
       const navButtons = document.querySelectorAll('.nav-link');
-      
-      // Update Navigasi Aktif
+
       navButtons.forEach(btn => {
-          btn.classList.remove('active');
-          if (btn.getAttribute('data-page') === pageName) {
-              btn.classList.add('active');
-          }
+        btn.classList.remove('active');
+        if (btn.getAttribute('data-page') === pageName) btn.classList.add('active');
       });
 
-      // Render Konten Sesuai Halaman
       switch (pageName) {
-          case 'dashboard':
-              container.innerHTML = renderDashboardPageTemplate();
-              loadDashboard(currentPeriod);
-              break;
-          case 'transaksi':
-              container.innerHTML = renderTransactionPageTemplate();
-              setupTransactionForm();
-              renderTransactionsList(); 
-              break;
-          case 'budget':
-              container.innerHTML = renderBudgetPageTemplate();
-              renderBudgetPage();
-              break;
-          case 'pengaturan':
-              container.innerHTML = renderSettingsPageTemplate();
-              renderSettingsPage();
-              break;
-          default:
-              container.innerHTML = `<div class="p-6 text-center text-red-500">Halaman tidak ditemukan.</div>`;
+        case 'dashboard':
+          container.innerHTML = renderDashboardPageTemplate();
+          loadDashboard(currentPeriod);
+          break;
+        case 'transaksi':
+          container.innerHTML = renderTransactionPageTemplate();
+          setupTransactionForm();
+          renderTransactionsList();
+          break;
+        case 'budget':
+          container.innerHTML = renderBudgetPageTemplate();
+          renderBudgetPage();
+          break;
+        case 'pengaturan':
+          container.innerHTML = renderSettingsPageTemplate();
+          renderSettingsPage();
+          break;
+        default:
+          container.innerHTML = `<div class="p-6 text-center text-red-500">Halaman tidak ditemukan.</div>`;
       }
-      
-      // Setup listener navigasi periode hanya jika di Dashboard
+
       if (pageName === 'dashboard') {
-           document.getElementById('prevPeriod').addEventListener('click', () => changePeriod(-1));
-           document.getElementById('nextPeriod').addEventListener('click', () => changePeriod(1));
+        document.getElementById('prevPeriod').addEventListener('click', () => changePeriod(-1));
+        document.getElementById('nextPeriod').addEventListener('click', () => changePeriod(1));
       }
     }
 
-    // (Below: reuse most of your original templates & functions, but call Supabase-enabled CRUD functions)
-    // For brevity, I'll reuse the same templates as in your original file with minor adaptions to hook Supabase functions.
-
+    // Templates (copied/kept from your original layout)
     function renderDashboardPageTemplate() {
       return `
-            <!-- Navigasi Periode (Bulan) -->
-            <div class="flex flex-col sm:flex-row items-center justify-between mb-6 space-y-3 sm:space-y-0 sm:space-x-3">
-              <h2 id="currentPeriodDisplay" class="text-xl font-bold">Periode: Loading...</h2>
-              <div class="flex space-x-2 w-full sm:w-auto">
-                <button id="prevPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
-                  &larr; Sebelumnya
-                </button>
-                <button id="nextPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
-                  Berikutnya &rarr;
-                </button>
-              </div>
-            </div>
-            
-            <!-- Grid Kartu Summary -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-              <!-- Kartu Pemasukan -->
-              <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--income-color);">
-                <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pemasukan</h3>
-                <p id="totalIncome" class="text-2xl font-extrabold" style="color: var(--income-color);">Rp -</p>
-              </div>
-              
-              <!-- Kartu Pengeluaran -->
-              <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--expense-color);">
-                <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pengeluaran</h3>
-                <p id="totalExpense" class="text-2xl font-extrabold" style="color: var(--expense-color);">Rp -</p>
-              </div>
-              
-              <!-- Kartu Saldo Akhir -->
-              <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--balance-color);">
-                <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Saldo Bersih</h3>
-                <p id="netBalance" class="text-2xl font-extrabold" style="color: var(--balance-color);">Rp -</p>
-              </div>
-            </div>
-            
-            <!-- Bagian Budget & Tren Bulanan (Status Budget di atas Tren) -->
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                
-                <!-- Kolom 1: Status Budget Pengeluaran (1 kolom di desktop) -->
-                <div class="card p-4 rounded-xl lg:col-span-1">
-                    <h3 class="text-lg font-bold mb-2">Status Budget Pengeluaran (${formatPeriod(currentPeriod)})</h3>
-                    <div id="budgetStatusContainer">
-                        <div class="flex justify-center items-center h-24"><div class="spinner"></div></div>
-                    </div>
-                </div>
-                
-                <!-- Kolom 2 & 3: Grafik Tren Bulanan (Bar Chart) - Mengambil 2 kolom di desktop, diletakkan di bawah Budget Status pada tata letak grid -->
-                <div class="card p-4 rounded-xl lg:col-span-2 order-last lg:order-none">
-                    <h3 class="text-xl font-bold mb-2">Grafik Tren Bulanan (12 Bulan Terakhir)</h3>
-                    <div id="monthlyTrendChart" class="w-full" style="height: 350px;">
-                        <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
-                    </div>
-                </div>
+        <div class="flex flex-col sm:flex-row items-center justify-between mb-6 space-y-3 sm:space-y-0 sm:space-x-3">
+          <h2 id="currentPeriodDisplay" class="text-xl font-bold">Periode: Loading...</h2>
+          <div class="flex space-x-2 w-full sm:w-auto">
+            <button id="prevPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
+              &larr; Sebelumnya
+            </button>
+            <button id="nextPeriod" class="period-button btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
+              Berikutnya &rarr;
+            </button>
+          </div>
+        </div>
 
-            </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--income-color);">
+            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pemasukan</h3>
+            <p id="totalIncome" class="text-2xl font-extrabold" style="color: var(--income-color);">Rp -</p>
+          </div>
+          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--expense-color);">
+            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Total Pengeluaran</h3>
+            <p id="totalExpense" class="text-2xl font-extrabold" style="color: var(--expense-color);">Rp -</p>
+          </div>
+          <div class="card p-5 rounded-xl transition duration-300 hover:shadow-xl" style="border-left: 5px solid var(--balance-color);">
+            <h3 class="text-sm font-semibold uppercase text-gray-500 mb-1">Saldo Bersih</h3>
+            <p id="netBalance" class="text-2xl font-extrabold" style="color: var(--balance-color);">Rp -</p>
+          </div>
+        </div>
 
-            <!-- Proporsi Charts (Pie Charts Berdampingan) -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Chart Proporsi Pengeluaran -->
-                <div class="card p-4 rounded-xl">
-                  <h3 class="text-lg font-bold mb-2">Proporsi Pengeluaran</h3>
-                  <div id="pieChartExpense" class="w-full" style="height: 300px;">
-                    <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
-                  </div>
-                </div>
-                
-                <!-- Chart Proporsi Pemasukan -->
-                <div class="card p-4 rounded-xl">
-                  <h3 class="text-lg font-bold mb-2">Proporsi Pemasukan</h3>
-                  <div id="pieChartIncome" class="w-full" style="height: 300px;">
-                    <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
-                  </div>
-                </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <div class="card p-4 rounded-xl lg:col-span-1">
+            <h3 class="text-lg font-bold mb-2">Status Budget Pengeluaran (${formatPeriod(currentPeriod)})</h3>
+            <div id="budgetStatusContainer">
+              <div class="flex justify-center items-center h-24"><div class="spinner"></div></div>
             </div>
-        `;
+          </div>
+
+          <div class="card p-4 rounded-xl lg:col-span-2 order-last lg:order-none">
+            <h3 class="text-xl font-bold mb-2">Grafik Tren Bulanan (12 Bulan Terakhir)</h3>
+            <div id="monthlyTrendChart" class="w-full" style="height: 350px;">
+              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="card p-4 rounded-xl">
+            <h3 class="text-lg font-bold mb-2">Proporsi Pengeluaran</h3>
+            <div id="pieChartExpense" class="w-full" style="height: 300px;">
+              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+            </div>
+          </div>
+          <div class="card p-4 rounded-xl">
+            <h3 class="text-lg font-bold mb-2">Proporsi Pemasukan</h3>
+            <div id="pieChartIncome" class="w-full" style="height: 300px;">
+              <div class="flex justify-center items-center h-full"><div class="spinner"></div></div>
+            </div>
+          </div>
+        </div>
+      `;
     }
-
-    // ... (Transaction, Budget, Settings templates - using original templates)
-    // For clarity and to keep response compact, reuse templates mostly unchanged:
 
     function renderTransactionPageTemplate() {
       const today = new Date().toISOString().substring(0,10);
@@ -909,350 +776,165 @@
       const incomeSourceOptions = currentCategories.incomeSource.map(cat => `<option value="${cat}">${cat}</option>`).join('');
       const accountOptions = currentCategories.account.map(acc => `<option value="${acc}">${acc}</option>`).join('');
       return `
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- Form Tambah Transaksi -->
-                <div class="lg:col-span-1 card p-6 rounded-xl">
-                    <h2 class="text-xl font-bold mb-4">Tambah Transaksi Baru</h2>
-                    <form id="transactionForm" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-1">Tipe Transaksi</label>
-                            <select id="txType" name="type" required class="w-full p-2 border border-gray-300 rounded-lg">
-                                <option value="Pengeluaran" data-color="${expenseColor}">Pengeluaran</option>
-                                <option value="Pemasukan" data-color="${incomeColor}">Pemasukan</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="txAmount" class="block text-sm font-medium mb-1">Jumlah (Rp)</label>
-                            <input type="number" id="txAmount" name="amount" required min="1" class="w-full p-2 border border-gray-300 rounded-lg">
-                        </div>
-                        <div>
-                            <label for="txDate" class="block text-sm font-medium mb-1">Tanggal</label>
-                            <input type="date" id="txDate" name="date" value="${today}" required class="w-full p-2 border border-gray-300 rounded-lg">
-                        </div>
-                        
-                        <!-- Pilihan Kategori / Sumber Pemasukan (Bergantung pada Tipe) -->
-                        <div id="categoryContainer">
-                            <label for="txCategory" class="block text-sm font-medium mb-1" id="categoryLabel">Kategori Pengeluaran</label>
-                            <select id="txCategory" name="category" required class="w-full p-2 border border-gray-300 rounded-lg">
-                                ${expenseOptions}
-                            </select>
-                            <p id="categoryHint" class="text-xs text-gray-500 mt-1">Pilih kategori untuk pengeluaran ini.</p>
-                        </div>
-                        
-                        <!-- Pilihan Akun (Selalu Ada) -->
-                        <div>
-                            <label for="txAccount" class="block text-sm font-medium mb-1">Akun / Dompet</label>
-                            <select id="txAccount" name="account" required class="w-full p-2 border border-gray-300 rounded-lg">
-                                ${accountOptions}
-                            </select>
-                            <p class="text-xs text-gray-500 mt-1">Akun asal uang (untuk pengeluaran) atau akun tujuan uang (untuk pemasukan).</p>
-                        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-1 card p-6 rounded-xl">
+            <h2 class="text-xl font-bold mb-4">Tambah Transaksi Baru</h2>
+            <form id="transactionForm" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-1">Tipe Transaksi</label>
+                <select id="txType" name="type" required class="w-full p-2 border border-gray-300 rounded-lg">
+                  <option value="Pengeluaran" data-color="${expenseColor}">Pengeluaran</option>
+                  <option value="Pemasukan" data-color="${incomeColor}">Pemasukan</option>
+                </select>
+              </div>
+              <div>
+                <label for="txAmount" class="block text-sm font-medium mb-1">Jumlah (Rp)</label>
+                <input type="number" id="txAmount" name="amount" required min="1" class="w-full p-2 border border-gray-300 rounded-lg">
+              </div>
+              <div>
+                <label for="txDate" class="block text-sm font-medium mb-1">Tanggal</label>
+                <input type="date" id="txDate" name="date" value="${today}" required class="w-full p-2 border border-gray-300 rounded-lg">
+              </div>
 
-                        <div>
-                            <label for="txDescription" class="block text-sm font-medium mb-1">Deskripsi (Opsional)</label>
-                            <input type="text" id="txDescription" name="description" class="w-full p-2 border border-gray-300 rounded-lg">
-                        </div>
-                        
-                        <button type="submit" class="btn-primary w-full text-white font-semibold py-2 rounded-lg mt-2">Simpan Transaksi</button>
-                    </form>
-                </div>
+              <div id="categoryContainer">
+                <label for="txCategory" class="block text-sm font-medium mb-1" id="categoryLabel">Kategori Pengeluaran</label>
+                <select id="txCategory" name="category" required class="w-full p-2 border border-gray-300 rounded-lg">
+                  ${expenseOptions}
+                </select>
+                <p id="categoryHint" class="text-xs text-gray-500 mt-1">Pilih kategori untuk pengeluaran ini.</p>
+              </div>
 
-                <!-- Daftar Transaksi -->
-                <div class="lg:col-span-2 card p-6 rounded-xl">
-                    <h2 class="text-xl font-bold mb-4">Daftar Semua Transaksi</h2>
-                    
-                    <!-- Search Bar -->
-                    <div class="relative mb-4">
-                        <input type="text" id="txSearchInput" placeholder="Cari berdasarkan deskripsi atau kategori..." class="w-full p-2 pl-10 border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500">
-                        <!-- Search Icon -->
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </div>
+              <div>
+                <label for="txAccount" class="block text-sm font-medium mb-1">Akun / Dompet</label>
+                <select id="txAccount" name="account" required class="w-full p-2 border border-gray-300 rounded-lg">
+                  ${accountOptions}
+                </select>
+                <p class="text-xs text-gray-500 mt-1">Akun asal uang (untuk pengeluaran) atau akun tujuan uang (untuk pemasukan).</p>
+              </div>
 
-                    <!-- Filter -->
-                    <div class="flex space-x-3 mb-4 flex-wrap">
-                        <select id="txFilterType" class="p-2 border border-gray-300 rounded-lg text-sm mb-2">
-                            <option value="all">Semua Tipe</option>
-                            <option value="Pengeluaran">Pengeluaran</option>
-                            <option value="Pemasukan">Pemasukan</option>
-                        </select>
-                        <select id="txFilterCategory" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
-                            <option value="all">Semua Kategori/Sumber</option>
-                            <!-- Opsi diisi di renderTransactionsList -->
-                        </select>
-                        <select id="txFilterAccount" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
-                            <option value="all">Semua Akun/Dompet</option>
-                            <!-- Opsi diisi di renderTransactionsList -->
-                        </select>
-                    </div>
+              <div>
+                <label for="txDescription" class="block text-sm font-medium mb-1">Deskripsi (Opsional)</label>
+                <input type="text" id="txDescription" name="description" class="w-full p-2 border border-gray-300 rounded-lg">
+              </div>
 
-                    <!-- Daftar -->
-                    <div id="transactionsList" class="space-y-3 max-h-[70vh] overflow-y-auto">
-                        <p class="text-gray-500 text-center p-4">Memuat transaksi...</p>
-                    </div>
-                </div>
+              <button type="submit" class="btn-primary w-full text-white font-semibold py-2 rounded-lg mt-2">Simpan Transaksi</button>
+            </form>
+          </div>
+
+          <div class="lg:col-span-2 card p-6 rounded-xl">
+            <h2 class="text-xl font-bold mb-4">Daftar Semua Transaksi</h2>
+
+            <div class="relative mb-4">
+              <input type="text" id="txSearchInput" placeholder="Cari berdasarkan deskripsi atau kategori..." class="w-full p-2 pl-10 border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
-        `;
+
+            <div class="flex space-x-3 mb-4 flex-wrap">
+              <select id="txFilterType" class="p-2 border border-gray-300 rounded-lg text-sm mb-2">
+                <option value="all">Semua Tipe</option>
+                <option value="Pengeluaran">Pengeluaran</option>
+                <option value="Pemasukan">Pemasukan</option>
+              </select>
+              <select id="txFilterCategory" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
+                <option value="all">Semua Kategori/Sumber</option>
+              </select>
+              <select id="txFilterAccount" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow mb-2">
+                <option value="all">Semua Akun/Dompet</option>
+              </select>
+            </div>
+
+            <div id="transactionsList" class="space-y-3 max-h-[70vh] overflow-y-auto">
+              <p class="text-gray-500 text-center p-4">Memuat transaksi...</p>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     function renderBudgetPageTemplate() {
       return `
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- Kolom Kiri: Budget Status (Sama seperti di Dashboard) -->
-                <div class="lg:col-span-1 card p-6 rounded-xl space-y-4">
-                    <h2 class="text-xl font-bold mb-4">Status Budget (Periode Ini)</h2>
-                    <div id="budgetStatusContainerPage">
-                         <p class="text-gray-500 text-center p-4">Memuat status budget...</p>
-                    </div>
-                </div>
-
-                <!-- Kolom Kanan: Pengaturan Budget -->
-                <div class="lg:col-span-2 card p-6 rounded-xl">
-                    <h2 class="text-xl font-bold mb-4">Atur Budget Pengeluaran Bulanan</h2>
-                    
-                    <div class="flex space-x-3 mb-4 items-center flex-wrap">
-                        <label class="font-semibold text-gray-700">Periode Budget:</label>
-                        <select id="budgetPeriodSelect" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-grow-0 min-w-[150px] mb-2 sm:mb-0">
-                            <!-- Opsi bulan/tahun akan diisi oleh JS -->
-                        </select>
-                        <button id="setBudgetBtn" class="btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">
-                           Tampilkan Budget
-                        </button>
-                    </div>
-                    
-                    <form id="budgetForm" class="space-y-3 p-4 border rounded-xl bg-gray-50">
-                        <div id="budgetInputs" class="space-y-3">
-                            <!-- Input Budget per Kategori akan diisi di sini -->
-                            <p class="text-gray-500">Pilih periode di atas untuk mengatur budget.</p>
-                        </div>
-                        <button type="submit" class="btn-primary w-full text-white font-semibold py-2 rounded-lg mt-4 hidden" id="saveBudgetBtn">Simpan Budget</button>
-                    </form>
-                </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-1 card p-6 rounded-xl space-y-4">
+            <h2 class="text-xl font-bold mb-4">Status Budget (Periode Ini)</h2>
+            <div id="budgetStatusContainerPage">
+              <p class="text-gray-500 text-center p-4">Memuat status budget...</p>
             </div>
-        `;
+          </div>
+
+          <div class="lg:col-span-2 card p-6 rounded-xl">
+            <h2 class="text-xl font-bold mb-4">Atur Budget Pengeluaran Bulanan</h2>
+
+            <div class="flex space-x-3 mb-4 items-center flex-wrap">
+              <label class="font-semibold text-gray-700">Periode Budget:</label>
+              <select id="budgetPeriodSelect" class="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-grow-0 min-w-[150px] mb-2 sm:mb-0"></select>
+              <button id="setBudgetBtn" class="btn-primary text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg">Tampilkan Budget</button>
+            </div>
+
+            <form id="budgetForm" class="space-y-3 p-4 border rounded-xl bg-gray-50">
+              <div id="budgetInputs" class="space-y-3">
+                <p class="text-gray-500">Pilih periode di atas untuk mengatur budget.</p>
+              </div>
+              <button type="submit" class="btn-primary w-full text-white font-semibold py-2 rounded-lg mt-4 hidden" id="saveBudgetBtn">Simpan Budget</button>
+            </form>
+          </div>
+        </div>
+      `;
     }
 
     function renderSettingsPageTemplate() {
       return `
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <!-- Kolom Kiri: Kategori & Sumber -->
-                <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
-                    <h2 class="text-xl font-bold mb-4">Pengaturan Kategori & Sumber/Akun</h2>
-                    
-                    <!-- Kategori Pengeluaran -->
-                    <div class="border p-4 rounded-lg bg-gray-50">
-                        <h3 class="text-lg font-semibold mb-3" style="color: ${expenseColor};">Kategori Pengeluaran (Expense)</h3>
-                        <div id="expenseCategoryList" class="mb-4 space-y-2"></div>
-                        <form id="addExpenseCategoryForm" class="flex space-x-2">
-                            <input type="text" id="newExpenseCategory" placeholder="Nama Kategori Baru" required class="flex-grow p-2 border rounded-lg text-sm">
-                            <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
-                        </form>
-                    </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
+            <h2 class="text-xl font-bold mb-4">Pengaturan Kategori & Sumber/Akun</h2>
 
-                    <!-- Sumber Pemasukan (Income Source) -->
-                    <div class="border p-4 rounded-lg bg-gray-50">
-                        <h3 class="text-lg font-semibold mb-3" style="color: ${incomeColor};">Sumber Pemasukan (Income Source)</h3>
-                        <div id="incomeSourceList" class="mb-4 space-y-2"></div>
-                        <form id="addIncomeSourceForm" class="flex space-x-2">
-                            <input type="text" id="newIncomeSource" placeholder="Nama Sumber Pemasukan Baru" required class="flex-grow p-2 border rounded-lg text-sm">
-                            <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
-                        </form>
-                    </div>
-
-                    <!-- Akun / Dompet (Account) -->
-                    <div class="border p-4 rounded-lg bg-gray-50">
-                        <h3 class="text-lg font-semibold mb-3" style="color: ${balanceColor};">Akun / Dompet (Account)</h3>
-                        <div id="accountList" class="mb-4 space-y-2"></div>
-                        <form id="addAccountForm" class="flex space-x-2">
-                            <input type="text" id="newAccount" placeholder="Nama Akun/Dompet Baru (e.g., Kas, Bank)" required class="flex-grow p-2 border rounded-lg text-sm">
-                            <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
-                        </form>
-                        <p class="text-xs text-gray-500 mt-2">Ini adalah tempat fisik uang Anda berada.</p>
-                    </div>
-                </div>
-
-                <!-- Kolom Kanan: Tema -->
-                <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
-                    <h2 class="text-xl font-bold mb-4">Pengaturan Lain</h2>
-
-                    <!-- Tema Aplikasi (Fitur Placeholder) -->
-                    <div class="border p-4 rounded-lg bg-gray-50">
-                        <h3 class="text-lg font-semibold mb-3">Pilih Tema Aplikasi</h3>
-                        <p class="text-sm text-gray-600">Saat ini menggunakan tema Default (Hijau Soft). Fitur kustomisasi tema akan hadir segera.</p>
-                        <div class="flex space-x-3 mt-3">
-                             <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Default (Aktif)</button>
-                             <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Gelap</button>
-                        </div>
-                    </div>
-                </div>
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3" style="color: ${expenseColor};">Kategori Pengeluaran (Expense)</h3>
+              <div id="expenseCategoryList" class="mb-4 space-y-2"></div>
+              <form id="addExpenseCategoryForm" class="flex space-x-2">
+                <input type="text" id="newExpenseCategory" placeholder="Nama Kategori Baru" required class="flex-grow p-2 border rounded-lg text-sm">
+                <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
+              </form>
             </div>
-        `;
+
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3" style="color: ${incomeColor};">Sumber Pemasukan (Income Source)</h3>
+              <div id="incomeSourceList" class="mb-4 space-y-2"></div>
+              <form id="addIncomeSourceForm" class="flex space-x-2">
+                <input type="text" id="newIncomeSource" placeholder="Nama Sumber Pemasukan Baru" required class="flex-grow p-2 border rounded-lg text-sm">
+                <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
+              </form>
+            </div>
+
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3" style="color: ${balanceColor};">Akun / Dompet (Account)</h3>
+              <div id="accountList" class="mb-4 space-y-2"></div>
+              <form id="addAccountForm" class="flex space-x-2">
+                <input type="text" id="newAccount" placeholder="Nama Akun/Dompet Baru (e.g., Kas, Bank)" required class="flex-grow p-2 border rounded-lg text-sm">
+                <button type="submit" class="btn-primary text-white py-2 px-3 rounded-lg text-sm">Tambah</button>
+              </form>
+              <p class="text-xs text-gray-500 mt-2">Ini adalah tempat fisik uang Anda berada.</p>
+            </div>
+          </div>
+
+          <div class="lg:col-span-1 card p-6 rounded-xl space-y-6">
+            <h2 class="text-xl font-bold mb-4">Pengaturan Lain</h2>
+
+            <div class="border p-4 rounded-lg bg-gray-50">
+              <h3 class="text-lg font-semibold mb-3">Pilih Tema Aplikasi</h3>
+              <p class="text-sm text-gray-600">Saat ini menggunakan tema Default (Hijau Soft). Fitur kustomisasi tema akan hadir segera.</p>
+              <div class="flex space-x-3 mt-3">
+                <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Default (Aktif)</button>
+                <button class="bg-gray-300 py-2 px-4 rounded-lg text-sm opacity-50 cursor-not-allowed">Gelap</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
-    // Render helpers reused from your original (loadDashboard, charts, transaction list, budget rendering, settings page wiring)
-    function formatPeriod(period) {
-      if (!period) return 'N/A';
-      const [year, month] = period.split('-');
-      const date = new Date(year, month - 1);
-      return date.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
-    }
-
-    function loadDashboard(period) {
-      updatePeriodDisplay(period);
-      const filteredTx = currentTransactions.filter(tx => tx.period === period);
-
-      let totalIncome = 0;
-      let totalExpense = 0;
-      const expenseMap = new Map();
-
-      filteredTx.forEach(tx => {
-        const amount = Number(tx.amount) || 0;
-        // determine type value (Pemasukan/Pengeluaran)
-        if (tx.type === 'Pemasukan') totalIncome += amount;
-        else if (tx.type === 'Pengeluaran') {
-          totalExpense += amount;
-          const categoryName = tx.category_name || tx.category || tx.description || 'Lain-lain';
-          expenseMap.set(categoryName, (expenseMap.get(categoryName) || 0) + amount);
-        }
-      });
-
-      const netBalance = totalIncome - totalExpense;
-      document.getElementById('totalIncome').textContent = formatRupiah(totalIncome);
-      document.getElementById('totalExpense').textContent = formatRupiah(totalExpense);
-      const netBalanceEl = document.getElementById('netBalance');
-      netBalanceEl.textContent = formatRupiah(netBalance);
-      netBalanceEl.style.color = netBalance >= 0 ? incomeColor : expenseColor;
-
-      renderBudgetStatus(totalExpense, expenseMap);
-      renderDashboardCharts(filteredTx);
-      renderMonthlyTrendChart();
-    }
-
-    function renderBudgetStatus(totalExpense, expenseMap) {
-      const budgetContainer = document.getElementById('budgetStatusContainer');
-      if (!budgetContainer) return;
-      
-      budgetContainer.innerHTML = '';
-      
-      const periodBudget = currentBudgets.find(b => b.period === currentPeriod);
-      if (!periodBudget) {
-        budgetContainer.innerHTML = `<p class="text-gray-500 p-4 text-center">Belum ada budget yang ditetapkan untuk periode ini.</p>`;
-        return;
-      }
-
-      let totalBudget = 0;
-      let totalUsed = 0;
-      let html = '<h4 class="text-lg font-bold mb-3">Ringkasan Budget</h4>';
-
-      const budgetsObj = periodBudget.budgets || (periodBudget.amount_limit ? { default: periodBudget.amount_limit } : {});
-
-      // But because budget records are stored per row, adapt if currentBudgets array contains multiple rows per period
-      // We'll aggregate budgets for this period:
-      const budgetsForPeriod = currentBudgets.filter(b => b.period === currentPeriod);
-      const mapBudgets = {};
-      budgetsForPeriod.forEach(b => {
-        // if category_id is null, it's hard to map; for now assume amounts stored with category info client-side
-        // We will render generic message if structure unknown
-      });
-
-      budgetContainer.innerHTML = `<p class="text-gray-500 p-4 text-center">Silakan buka halaman Budget untuk melihat & atur detail budget.</p>`;
-    }
-
-    function renderDashboardCharts(transactions) {
-      const expenseMap = new Map();
-      const incomeMap = new Map();
-      transactions.forEach(tx => {
-        const amount = Number(tx.amount) || 0;
-        const category = tx.category_name || tx.category || 'Lain-lain';
-        if (tx.type === 'Pengeluaran') expenseMap.set(category, (expenseMap.get(category) || 0) + amount);
-        else if (tx.type === 'Pemasukan') incomeMap.set(category, (incomeMap.get(category) || 0) + amount);
-      });
-
-      const expenseChartData = [['Kategori', 'Jumlah Pengeluaran']];
-      expenseMap.forEach((amount, category) => expenseChartData.push([category, amount]));
-      const incomeChartData = [['Sumber', 'Jumlah Pemasukan']];
-      incomeMap.forEach((amount, category) => incomeChartData.push([category, amount]));
-
-      drawPieChart('pieChartExpense', expenseChartData, 'Pengeluaran');
-      drawPieChart('pieChartIncome', incomeChartData, 'Pemasukan');
-    }
-
-    function drawPieChart(elementId, arrayData, title) {
-      const el = document.getElementById(elementId);
-      if (!el) return;
-      if (arrayData.length <= 1) {
-        el.innerHTML = `<div class="flex justify-center items-center h-full text-gray-500">Tidak ada data ${title} di periode ini.</div>`;
-        return;
-      }
-      google.charts.load('current', { packages: ['corechart'] });
-      google.charts.setOnLoadCallback(() => {
-        const data = google.visualization.arrayToDataTable(arrayData);
-        const colors = [expenseColor, incomeColor, balanceColor, '#8AA694', '#E6B89C', '#B0C4DE', '#A9A9A9'];
-        const options = {
-          title: '',
-          backgroundColor: chartBg,
-          legend: { position: 'bottom', textStyle: { color: chartText } },
-          pieHole: 0.3,
-          colors: colors.slice(0, arrayData.length - 1),
-          chartArea: { left: '5%', top: '5%', width: '90%', height: '80%' },
-          tooltip: { textStyle: { color: chartText } }
-        };
-        const chart = new google.visualization.PieChart(el);
-        chart.draw(data, options);
-      });
-    }
-
-    function renderMonthlyTrendChart() {
-      const trendEl = document.getElementById('monthlyTrendChart');
-      if (!trendEl) return;
-      const monthlyData = {};
-      const today = new Date();
-      for (let i = 11; i >= 0; i--) {
-        const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
-        const period = date.toISOString().substring(0, 7);
-        const label = date.toLocaleString('id-ID', { month: 'short' });
-        monthlyData[period] = { month: label, income: 0, expense: 0 };
-      }
-      currentTransactions.forEach(tx => {
-        if (monthlyData[tx.period]) {
-          if (tx.type === 'Pemasukan') monthlyData[tx.period].income += Number(tx.amount) || 0;
-          else if (tx.type === 'Pengeluaran') monthlyData[tx.period].expense += Number(tx.amount) || 0;
-        }
-      });
-      const chartDataArray = [['Bulan', 'Pemasukan', 'Pengeluaran']];
-      Object.keys(monthlyData).sort().forEach(period => {
-        const data = monthlyData[period];
-        chartDataArray.push([data.month, data.income, data.expense]);
-      });
-      if (chartDataArray.length <= 1) {
-        trendEl.innerHTML = `<div class="flex justify-center items-center h-full text-gray-500">Tidak ada data transaksi yang cukup untuk menampilkan tren bulanan (minimal 1 bulan transaksi).</div>`;
-        return;
-      }
-      google.charts.load('current', { 'packages': ['corechart'] });
-      google.charts.setOnLoadCallback(() => {
-        const data = google.visualization.arrayToDataTable(chartDataArray);
-        const options = {
-          title: '',
-          backgroundColor: chartBg,
-          legend: { position: 'top', textStyle: { color: chartText } },
-          vAxis: { title: 'Jumlah (Rp)', textStyle: { color: chartText }, gridlines: { color: '#f0f0f0' } },
-          hAxis: { title: 'Bulan', textStyle: { color: chartText } },
-          series: { 0: { color: incomeColor }, 1: { color: expenseColor } },
-          chartArea: { width: '85%', height: '75%' },
-          tooltip: { isHtml: true }
-        };
-        const chart = new google.visualization.ColumnChart(trendEl);
-        chart.draw(data, options);
-      });
-    }
-
-    // Transaction list & filters
-    function renderTransactionPage() {
-      // just in case
-      renderPage('transaksi');
-    }
-
+    // UI functions: setupTransactionForm, renderTransactionsList, loadDashboard, charts, budgets, settings
     function setupTransactionForm() {
       const form = document.getElementById('transactionForm');
       if (!form) return;
@@ -1266,20 +948,19 @@
 
       function updateCategoryOptions() {
         const type = txTypeSelect.value;
-        let options, labelText, hintText;
+        let options = '';
         if (type === 'Pengeluaran') {
           options = currentCategories.expense.map(cat => `<option value="${cat}">${cat}</option>`).join('');
-          labelText = 'Kategori Pengeluaran';
-          hintText = 'Pilih kategori untuk pengeluaran ini.';
+          categoryLabel.textContent = 'Kategori Pengeluaran';
+          categoryHint.textContent = 'Pilih kategori untuk pengeluaran ini.';
         } else {
           options = currentCategories.incomeSource.map(cat => `<option value="${cat}">${cat}</option>`).join('');
-          labelText = 'Sumber Pemasukan';
-          hintText = 'Pilih sumber dari pemasukan ini (e.g., Gaji, Investasi).';
+          categoryLabel.textContent = 'Sumber Pemasukan';
+          categoryHint.textContent = 'Pilih sumber dari pemasukan ini (e.g., Gaji).';
         }
         txCategorySelect.innerHTML = options || '<option value="">(Tambahkan kategori di Pengaturan)</option>';
-        categoryLabel.textContent = labelText;
-        categoryHint.textContent = hintText;
       }
+
       function updateFilterOptions() {
         if (filterCategorySelect) {
           const allCategories = [
@@ -1298,6 +979,7 @@
 
       txTypeSelect.addEventListener('change', updateCategoryOptions);
       if (searchInput) searchInput.addEventListener('input', renderTransactionsList);
+
       updateCategoryOptions();
       updateFilterOptions();
 
@@ -1309,8 +991,9 @@
         const category = form.elements['category'].value;
         const account = form.elements['account'].value;
         const description = form.elements['description'].value;
-        if (!category) return showModal("Gagal", "Kategori/Sumber harus dipilih.");
-        if (!account) return showModal("Gagal", "Akun/Dompet harus dipilih.");
+        if (!category) return showModal('Gagal', 'Kategori/Sumber harus dipilih.');
+        if (!account) return showModal('Gagal', 'Akun/Dompet harus dipilih.');
+
         await saveTransactionResolved(type, amount, date, category, account, description);
       });
       document.getElementById('txFilterType')?.addEventListener('change', renderTransactionsList);
@@ -1328,23 +1011,27 @@
         .filter(tx => (filterType === 'all' || tx.type === filterType))
         .filter(tx => {
           if (filterCategory === 'all') return true;
-          // resolve category name via categories table if stored as category_id
-          const catName = tx.category_name || tx.category || '';
-          return catName === filterCategory;
+          const name = tx.category_name || tx.category || '';
+          return name === filterCategory;
         })
-        .filter(tx => (filterAccount === 'all' || (tx.account_name || tx.account || '') === filterAccount))
         .filter(tx => {
-          if (searchTerm === '') return true;
-          const searchString = `${tx.description || ''} ${tx.category_name || tx.category || ''} ${tx.account_name || tx.account || ''}`.toLowerCase();
-          return searchString.includes(searchTerm);
+          if (filterAccount === 'all') return true;
+          const a = tx.account_name || tx.account || '';
+          return a === filterAccount;
+        })
+        .filter(tx => {
+          if (!searchTerm) return true;
+          const hay = `${tx.description || ''} ${tx.category_name || tx.category || ''} ${tx.account_name || tx.account || ''}`.toLowerCase();
+          return hay.includes(searchTerm);
         })
         .sort((a,b) => new Date(b.date) - new Date(a.date));
 
       container.innerHTML = '';
       if (filtered.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 text-center p-4">Tidak ada transaksi yang cocok dengan filter atau pencarian ini.</p>';
+        container.innerHTML = '<p class="text-gray-500 text-center p-4">Belum ada transaksi. Tambahkan transaksi pertama Anda menggunakan formulir di kiri.</p>';
         return;
       }
+
       filtered.forEach(tx => {
         const isExpense = tx.type === 'Pengeluaran';
         const color = isExpense ? expenseColor : incomeColor;
@@ -1376,10 +1063,56 @@
       });
     }
 
-    // Budget page render & logic (simplified)
+    function loadDashboard(period) {
+      currentPeriod = period || currentPeriod;
+      const displayEl = document.getElementById('currentPeriodDisplay');
+      if (displayEl) displayEl.textContent = `Periode: ${formatPeriod(currentPeriod)}`;
+
+      const filteredTx = (currentTransactions || []).filter(tx => tx.period === currentPeriod);
+
+      let totalIncome = 0;
+      let totalExpense = 0;
+      const expenseMap = new Map();
+
+      filteredTx.forEach(tx => {
+        const amount = Number(tx.amount) || 0;
+        if (tx.type === 'Pemasukan') totalIncome += amount;
+        else if (tx.type === 'Pengeluaran') {
+          totalExpense += amount;
+          const categoryName = tx.category_name || tx.category || 'Lain-lain';
+          expenseMap.set(categoryName, (expenseMap.get(categoryName) || 0) + amount);
+        }
+      });
+
+      const netBalance = totalIncome - totalExpense;
+      const totalIncomeEl = document.getElementById('totalIncome');
+      const totalExpenseEl = document.getElementById('totalExpense');
+      const netBalanceEl = document.getElementById('netBalance');
+      if (totalIncomeEl) totalIncomeEl.textContent = formatRupiah(totalIncome);
+      if (totalExpenseEl) totalExpenseEl.textContent = formatRupiah(totalExpense);
+      if (netBalanceEl) {
+        netBalanceEl.textContent = formatRupiah(netBalance);
+        netBalanceEl.style.color = netBalance >= 0 ? incomeColor : expenseColor;
+      }
+
+      if (typeof renderDashboardCharts === 'function') {
+        renderDashboardCharts(filteredTx);
+      } else {
+        const pieExpense = document.getElementById('pieChartExpense');
+        const pieIncome = document.getElementById('pieChartIncome');
+        if (pieExpense) pieExpense.innerHTML = `<div class="text-sm text-gray-500 p-4">Chart pengeluaran akan tampil di sini.</div>`;
+        if (pieIncome) pieIncome.innerHTML = `<div class="text-sm text-gray-500 p-4">Chart pemasukan akan tampil di sini.</div>`;
+      }
+
+      if (typeof renderMonthlyTrendChart === 'function') {
+        renderMonthlyTrendChart();
+      }
+    }
+
+    // Budget & Settings simplified rendering
     function renderBudgetPage() {
-      const totalExpense = currentTransactions.filter(tx => tx.type==='Pengeluaran' && tx.period === currentPeriod).reduce((s,tx)=> s + (Number(tx.amount)||0),0);
-      const expenseMap = currentTransactions.filter(tx => tx.type==='Pengeluaran' && tx.period === currentPeriod).reduce((map,tx) => {
+      const totalExpense = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((s,tx) => s + (Number(tx.amount)||0),0);
+      const expenseMap = currentTransactions.filter(tx => tx.type === 'Pengeluaran' && tx.period === currentPeriod).reduce((map,tx) => {
         const cat = tx.category_name || tx.category || 'Lain-lain';
         map.set(cat, (map.get(cat)||0) + (Number(tx.amount)||0));
         return map;
@@ -1451,11 +1184,9 @@
         budgetContainer.innerHTML += `<p class="text-gray-500 p-4 text-center">Belum ada budget yang ditetapkan untuk periode ini.</p>`;
         return;
       }
-      // For now display aggregated placeholder (detail depends on schema mapping)
       budgetContainer.innerHTML += `<p class="text-sm text-gray-600">Budget detail ditemukan, buka input Budget untuk melihat & ubah.</p>`;
     }
 
-    // Settings
     function renderSettingsPage() {
       const expenseList = document.getElementById('expenseCategoryList');
       if (expenseList) {
@@ -1471,7 +1202,7 @@
         incomeSourceList.innerHTML = currentCategories.incomeSource.map(cat => `
             <div class="flex justify-between items-center bg-white p-2 rounded-md shadow-sm border border-green-100">
                 <span>${cat}</span>
-                <button data-name="${cat}" data-type="incomeSource" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
+                <button data-name="${cat}" data-type="income" class="delete-cat-btn text-red-500 hover:text-red-700 transition">Hapus</button>
             </div>
         `).join('');
       }
@@ -1510,17 +1241,19 @@
           const type = e.currentTarget.getAttribute('data-type');
           showModal('Konfirmasi Hapus', `Yakin ingin menghapus item "${name}" dari ${type}?`, true, () => {
             if (type === 'account') deleteAccount(name);
-            else if (type === 'expense' || type === 'incomeSource') deleteCategory(name);
+            else deleteCategory(name);
           });
         });
       });
     }
 
-    // Period controls
-    function updatePeriodDisplay(period) {
-      const displayEl = document.getElementById('currentPeriodDisplay');
-      if (displayEl) displayEl.textContent = `Periode: ${formatPeriod(period)}`;
+    function formatPeriod(period) {
+      if (!period) return 'N/A';
+      const [year, month] = period.split('-');
+      const date = new Date(year, month - 1);
+      return date.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
     }
+
     function changePeriod(offset) {
       const [year, month] = currentPeriod.split('-').map(Number);
       const date = new Date(year, month - 1);
@@ -1532,16 +1265,25 @@
       else if (currentPage === 'budget') renderBudgetPage();
     }
 
-    // Setup nav buttons
+    // wire nav buttons
     document.querySelectorAll('.nav-link').forEach(button => {
-      button.addEventListener('click', (e) => renderPage(e.target.getAttribute('data-page')));
+      button.addEventListener('click', (e) => {
+        renderPage(e.target.getAttribute('data-page'));
+      });
     });
 
-    // Window resize -> redraw charts
+    // attach resize handler to redraw charts if functions available
     window.addEventListener('resize', () => {
-      if (currentPage === 'dashboard' && isAuthReady) loadDashboard(currentPeriod);
+      if (currentPage === 'dashboard') loadDashboard(currentPeriod);
+    });
+
+    // initial UI: if not signed in, show auth UI
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('loadingOverlay').classList.add('hidden');
+      // If user signed in, initialSession check above will handle; else show auth
     });
 
   </script>
+
 </body>
 </html>
